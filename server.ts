@@ -30,6 +30,85 @@ if (firebaseApp) setLogLevel('error');
 const db = firebaseApp ? getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId) : null;
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }); // Ensure GEMINI_API_KEY is available
+const DEFAULT_CHAT_RATE_LIMIT = 10;
+const DEFAULT_CHAT_PROMPT_CHARS = 4000;
+const DEFAULT_CHAT_HISTORY_ITEMS = 24;
+const DEFAULT_CHAT_IMAGE_B64_CHARS = 2_500_000;
+const DEFAULT_CHAT_BODY_LIMIT_MB = 4;
+
+interface RuntimeConfig {
+  allowMcpDeploy: boolean;
+  allowKalshiTrading: boolean;
+  chatRateLimit: number;
+  chatPromptCharsMax: number;
+  chatHistoryItemsMax: number;
+  chatImageB64CharsMax: number;
+  chatBodyLimitMb: number;
+}
+
+function parseBooleanEnvFlag(envName: string, fallback: boolean): boolean {
+  const rawValue = process.env[envName];
+  if (!rawValue || !rawValue.trim()) {
+    return fallback;
+  }
+
+  const normalizedValue = rawValue.trim().toLowerCase();
+  if (normalizedValue === 'true') {
+    return true;
+  }
+  if (normalizedValue === 'false') {
+    return false;
+  }
+
+  console.warn(`[AURA:CONFIG] Invalid boolean for ${envName}. Expected "true" or "false". Falling back to ${fallback}.`);
+  return fallback;
+}
+
+function parsePositiveIntEnv(envName: string, fallback: number, maxValue: number): number {
+  const rawValue = process.env[envName];
+  if (!rawValue || !rawValue.trim()) {
+    return fallback;
+  }
+
+  const parsedValue = Number.parseInt(rawValue.trim(), 10);
+  if (!Number.isFinite(parsedValue) || parsedValue <= 0 || parsedValue > maxValue) {
+    console.warn(
+      `[AURA:CONFIG] Invalid number for ${envName}. Expected integer in range 1-${maxValue}. Falling back to ${fallback}.`
+    );
+    return fallback;
+  }
+
+  return parsedValue;
+}
+
+function loadRuntimeConfig(): RuntimeConfig {
+  const config: RuntimeConfig = {
+    allowMcpDeploy: parseBooleanEnvFlag('ALLOW_MCP_DEPLOY', false),
+    allowKalshiTrading: parseBooleanEnvFlag('ALLOW_KALSHI_TRADING', false),
+    chatRateLimit: parsePositiveIntEnv('CHAT_RATE_LIMIT', DEFAULT_CHAT_RATE_LIMIT, 1000),
+    chatPromptCharsMax: parsePositiveIntEnv('CHAT_PROMPT_CHARS_MAX', DEFAULT_CHAT_PROMPT_CHARS, 100_000),
+    chatHistoryItemsMax: parsePositiveIntEnv('CHAT_HISTORY_ITEMS_MAX', DEFAULT_CHAT_HISTORY_ITEMS, 200),
+    chatImageB64CharsMax: parsePositiveIntEnv('CHAT_IMAGE_B64_CHARS_MAX', DEFAULT_CHAT_IMAGE_B64_CHARS, 10_000_000),
+    chatBodyLimitMb: parsePositiveIntEnv('CHAT_BODY_LIMIT_MB', DEFAULT_CHAT_BODY_LIMIT_MB, 20)
+  };
+
+  if (!process.env.AURA_ADMIN_SECRET?.trim()) {
+    console.warn('[AURA:CONFIG] AURA_ADMIN_SECRET is not set. Privileged endpoints will remain inaccessible.');
+  }
+  if (config.allowMcpDeploy && !process.env.AURA_ADMIN_SECRET?.trim()) {
+    console.warn('[AURA:CONFIG] ALLOW_MCP_DEPLOY is true but AURA_ADMIN_SECRET is missing. Deploy route remains inaccessible.');
+  }
+  if (config.allowKalshiTrading && !process.env.AURA_ADMIN_SECRET?.trim()) {
+    console.warn('[AURA:CONFIG] ALLOW_KALSHI_TRADING is true but AURA_ADMIN_SECRET is missing. Kalshi execute route remains inaccessible.');
+  }
+  if (!isGeminiConfigured()) {
+    console.warn('[AURA:CONFIG] GEMINI_API_KEY missing. /api/chat returns a safe unavailable response.');
+  }
+
+  return config;
+}
+
+const runtimeConfig = loadRuntimeConfig();
 
 const sportsToolDeclaration = {
     name: "delegate_sports_query",
@@ -198,6 +277,59 @@ function looksLikeJwt(token: string): boolean {
   return token.split('.').length === 3;
 }
 
+function hasValidAdminSecret(req: Request): boolean {
+  const configuredSecret = process.env.AURA_ADMIN_SECRET?.trim();
+  if (!configuredSecret) {
+    return false;
+  }
+
+  const bearerToken = extractBearerToken(req);
+  if (!bearerToken) {
+    return false;
+  }
+
+  return safeConstantTimeEqual(bearerToken, configuredSecret);
+}
+
+function requireAdminSecret(req: Request, res: Response, next: NextFunction): void {
+  if (hasValidAdminSecret(req)) {
+    next();
+    return;
+  }
+
+  console.warn('[ADMIN_AUTH_DENIED]', {
+    method: req.method,
+    path: req.path,
+    host: req.get('host') || '',
+    ip: req.ip,
+    hasAuthorizationHeader: Boolean(req.header('authorization') || req.header('x-serverless-authorization'))
+  });
+  res.status(401).json({ error: 'Unauthorized' });
+}
+
+function isGeminiConfigured(): boolean {
+  return Boolean(process.env.GEMINI_API_KEY?.trim());
+}
+
+function hasDisallowedTradingToken(value: string): boolean {
+  const normalizedValue = value.toLowerCase();
+  const blockedTokens = ['place_limit_order', 'order', 'trade', 'buy', 'sell', 'cancel', 'portfolio/orders'];
+  return blockedTokens.some((token) => normalizedValue.includes(token));
+}
+
+function isKalshiTradingIntent(tool: string, args: Record<string, unknown>): boolean {
+  if (hasDisallowedTradingToken(tool)) {
+    return true;
+  }
+
+  const action = typeof args.action === 'string' ? args.action : '';
+  const operation = typeof args.operation === 'string' ? args.operation : '';
+  const endpoint = typeof args.endpoint === 'string' ? args.endpoint : '';
+  const path = typeof args.path === 'string' ? args.path : '';
+
+  return [action, operation, endpoint, path].some((value) => value && hasDisallowedTradingToken(value));
+}
+
 async function hasValidSchedulerOidcToken(req: Request): Promise<boolean> {
   const bearerToken = extractBearerToken(req);
   if (!bearerToken || !looksLikeJwt(bearerToken)) {
@@ -251,7 +383,7 @@ async function startServer() {
   app.disable('x-powered-by');
   app.set('trust proxy', 1);
   app.use(helmet({ contentSecurityPolicy: false }));
-  app.use(express.json());
+  app.use(express.json({ limit: `${runtimeConfig.chatBodyLimitMb}mb` }));
 
   const apiLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -262,7 +394,7 @@ async function startServer() {
   });
   const chatLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    limit: 30,
+    limit: runtimeConfig.chatRateLimit,
     standardHeaders: 'draft-8',
     legacyHeaders: false
   });
@@ -714,8 +846,12 @@ Current Date Context: ${new Date().toISOString().split('T')[0].replace(/-/g, '')
       }
   });
 
-  app.post('/api/mcp/deploy', async (req, res) => {
+  app.post('/api/mcp/deploy', requireAdminSecret, async (req, res) => {
       try {
+          if (!runtimeConfig.allowMcpDeploy) {
+              return res.status(403).json({ error: 'MCP deploy disabled' });
+          }
+
           console.log('[AURA:MCP] Launching live MCP build pipeline...');
           const result = await generateAndDeployMCP({});
           res.json({
@@ -781,11 +917,15 @@ Current Date Context: ${new Date().toISOString().split('T')[0].replace(/-/g, '')
       }
   });
 
-  app.post('/api/mcp/kalshi/execute', async (req, res) => {
+  app.post('/api/mcp/kalshi/execute', requireAdminSecret, async (req, res) => {
       try {
           const { tool, args = {} } = req.body;
           if (!tool) {
               return res.status(400).json({ error: 'BAD_REQUEST: Missing tool name.' });
+          }
+
+          if (isKalshiTradingIntent(String(tool), args as Record<string, unknown>) && !runtimeConfig.allowKalshiTrading) {
+              return res.status(403).json({ error: 'Kalshi trading disabled' });
           }
 
           console.log(`[AURA:MCP] Executing Kalshi Tool: ${tool} with args:`, args);
@@ -1015,6 +1155,50 @@ Current Date Context: ${new Date().toISOString().split('T')[0].replace(/-/g, '')
       try {
           const { message, history, image, imageMime } = req.body;
           if (!message && !image) return res.status(400).json({ error: "Message or image required" });
+
+          if (!isGeminiConfigured()) {
+              return res.status(503).json({
+                  artifacts: [{
+                      id: `cfg_${Date.now()}`,
+                      type: 'SYSTEM_MESSAGE',
+                      resolution_state: 'GROUNDING_FAULT',
+                      context_summary: 'AI route unavailable: GEMINI_API_KEY is not configured.'
+                  }]
+              });
+          }
+
+          if (typeof message === 'string' && message.length > runtimeConfig.chatPromptCharsMax) {
+              return res.status(413).json({
+                  artifacts: [{
+                      id: `size_${Date.now()}`,
+                      type: 'SYSTEM_MESSAGE',
+                      resolution_state: 'GROUNDING_FAULT',
+                      context_summary: `Prompt exceeds limit of ${runtimeConfig.chatPromptCharsMax} characters.`
+                  }]
+              });
+          }
+
+          if (Array.isArray(history) && history.length > runtimeConfig.chatHistoryItemsMax) {
+              return res.status(413).json({
+                  artifacts: [{
+                      id: `hist_${Date.now()}`,
+                      type: 'SYSTEM_MESSAGE',
+                      resolution_state: 'GROUNDING_FAULT',
+                      context_summary: `History exceeds limit of ${runtimeConfig.chatHistoryItemsMax} messages.`
+                  }]
+              });
+          }
+
+          if (typeof image === 'string' && image.length > runtimeConfig.chatImageB64CharsMax) {
+              return res.status(413).json({
+                  artifacts: [{
+                      id: `img_${Date.now()}`,
+                      type: 'SYSTEM_MESSAGE',
+                      resolution_state: 'GROUNDING_FAULT',
+                      context_summary: `Image payload exceeds limit of ${runtimeConfig.chatImageB64CharsMax} characters.`
+                  }]
+              });
+          }
 
           const authHeader = req.header('authorization') || req.header('x-serverless-authorization');
           const token = authHeader ? authHeader.replace(/^Bearer\s+/i, '').trim() : undefined;
