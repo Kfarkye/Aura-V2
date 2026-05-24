@@ -33,8 +33,8 @@ export function MarkdownChart({ data }: MarkdownChartProps) {
       return (
         <div className="bg-neutral-900 border border-neutral-800 p-3 rounded-lg shadow-xl">
           <p className="text-neutral-400 text-xs mb-1 font-mono uppercase">{label}</p>
-          {payload.map((entry: any, index: number) => (
-             <p key={index} className="text-emerald-400 font-medium text-sm">
+          {parsedData?.data && payload.map((entry: any, index: number) => (
+             <p key={index} className="text-white font-medium text-sm">
                 {entry.name}: {entry.value}
              </p>
           ))}
@@ -49,7 +49,7 @@ export function MarkdownChart({ data }: MarkdownChartProps) {
        {(title || type) && (
            <div className="flex items-center justify-between mb-6">
                <div className="flex items-center gap-2">
-                   <Activity className="h-4 w-4 text-emerald-400" />
+                   <Activity className="h-4 w-4 text-neutral-400" />
                    <h4 className="text-sm font-semibold text-neutral-200">{title || 'Data Visualization'}</h4>
                </div>
                <span className="text-[10px] uppercase font-mono text-neutral-500 tracking-wider bg-neutral-950 px-2 py-1 rounded-md border border-neutral-800">
@@ -81,10 +81,10 @@ export function MarkdownChart({ data }: MarkdownChartProps) {
                <Line 
                  type="monotone" 
                  dataKey={yKey || Object.keys(chartData[0] || {})[1]} 
-                 stroke="#34d399" 
+                 stroke="#e5e5e5" 
                  strokeWidth={2}
-                 dot={{ fill: '#0a0a0a', stroke: '#34d399', strokeWidth: 2, r: 4 }}
-                 activeDot={{ r: 6, fill: '#34d399' }}
+                 dot={{ fill: '#0a0a0a', stroke: '#e5e5e5', strokeWidth: 2, r: 4 }}
+                 activeDot={{ r: 6, fill: '#e5e5e5' }}
                />
              </LineChart>
            ) : (
@@ -107,7 +107,7 @@ export function MarkdownChart({ data }: MarkdownChartProps) {
                <Tooltip content={<CustomTooltip />} cursor={{fill: '#171717'}} />
                <Bar 
                  dataKey={yKey || Object.keys(chartData[0] || {})[1]} 
-                 fill="#34d399" 
+                 fill="#e5e5e5" 
                  radius={[4, 4, 0, 0]} 
                />
              </BarChart>

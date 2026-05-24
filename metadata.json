@@ -1,6 +1,6 @@
 {
   "name": "Aura",
-  "description": "An AI-native enterprise orchestration platform with predictive intelligence, live sports analytics, and deep workspace integrations.",
+  "description": "A smart live sports analytics platform for checking game states, predictive analysis, and historical player logs.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

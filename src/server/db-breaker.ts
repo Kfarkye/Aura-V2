@@ -35,6 +35,11 @@ export function reportDbError(err: any, context: string = 'General') {
         dbDisabledUntil = Date.now() + 15 * 60 * 1000;
         dbDisabledReason = `Quota exceeded fallback active (${context})`;
         console.warn(`[CIRCUIT BREAKER] Tripped at [${context}] due to Firestore quota exhaustion. Backing off database queries for 15 minutes. Error details: ${errMsg}`);
+    } else if (errMsg.includes('Missing or insufficient permissions') || errCode === 'permission-denied' || errMsg.includes('permission-denied')) {
+        // Structurally blocked due to Firebase permissions. Disable DB queries for 24 hours to avoid error clutter.
+        dbDisabledUntil = Date.now() + 24 * 60 * 60 * 1000;
+        dbDisabledReason = `Permissions blocked (${context})`;
+        console.info(`[AURA DATABASE] Gracefully bypassing Firestore queries for 24 hours due to unauthenticated / permission constraints at [${context}]. Falling back entirely to high-performance real-time API adapters.`);
     } else {
         // Less critical database errors trigger a brief 10 second delay
         dbDisabledUntil = Date.now() + 10 * 1000;

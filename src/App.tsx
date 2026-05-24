@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { BrowserRouter, Routes, Route, useNavigate, Link, useParams, useLocation } from 'react-router-dom';
-import { Search, Send, ShieldCheck, Calendar as CalendarIcon, CloudFog, AlertCircle, Link as LinkIcon, ArrowLeft, Loader2 } from 'lucide-react';
+import { BrowserRouter, Routes, Route, Link, useParams, useLocation } from 'react-router-dom';
+import { Search, Send, ShieldCheck, Calendar as CalendarIcon, CloudFog, AlertCircle, Link as LinkIcon, ArrowLeft, Activity, Camera, X } from 'lucide-react';
 import Markdown, { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { motion, AnimatePresence } from 'motion/react';
@@ -22,6 +22,7 @@ import { YoutubeMediaCard } from './components/YoutubeMediaCard';
 import { SEO } from './components/SEO';
 import { WorkspaceOrchestrationBlueprint } from './components/WorkspaceOrchestrationBlueprint';
 import { EmailMimeViewer } from './components/EmailMimeViewer';
+import { KalshiMcpBlueprint } from './components/KalshiMcpBlueprint';
 
 // ============================================================================
 // Core Interfaces
@@ -44,12 +45,14 @@ export interface FeedCard {
     factual_claims?: { claim: string; source_entity: string }[];
 }
 
+const SPRING_TRANSITION = { type: "spring" as const, stiffness: 500, damping: 32 };
+
 // ============================================================================
 // Utilities
 // ============================================================================
 const generateId = (prefix: string) => `${prefix}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
-// Institutional Image Loader (Hardware Accelerated with Skeleton Pulse)
+// Institutional Image Loader (Hardware Accelerated Volumetric Shimmer)
 const SafeImage = React.memo(({ src, alt, containerClassName, imageClassName }: { src: string; alt: string; containerClassName?: string; imageClassName?: string }) => {
     const [status, setStatus] = useState<'loading' | 'loaded' | 'error'>('loading');
 
@@ -58,17 +61,21 @@ const SafeImage = React.memo(({ src, alt, containerClassName, imageClassName }: 
     }
 
     return (
-        <div className={`relative overflow-hidden bg-[#0c0c0e] border border-white/[0.03] ${containerClassName || ''}`}>
+        <div className={`relative overflow-hidden bg-[#0A0A0C] border border-white/[0.02] ${containerClassName || ''}`}>
             {status === 'loading' && (
-                <div className="absolute inset-0 bg-[#0e0e11] overflow-hidden pointer-events-none z-10" aria-hidden="true">
-                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/[0.03] to-transparent animate-shimmer" />
+                <div className="absolute inset-0 bg-[#0E0E12] overflow-hidden pointer-events-none z-10" aria-hidden="true">
+                    <motion.div 
+                        className="absolute inset-0 w-[200%] h-full bg-gradient-to-r from-transparent via-white/[0.04] to-transparent -skew-x-12"
+                        animate={{ x: ['-100%', '100%'] }}
+                        transition={{ repeat: Infinity, duration: 1.5, ease: 'linear' }}
+                    />
                 </div>
             )}
             <img 
                 src={src} 
                 alt={alt}
                 referrerPolicy="no-referrer"
-                className={`w-full h-full object-cover transform-gpu will-change-[transform,opacity] transition-all duration-1000 ease-[0.16,1,0.3,1] ${status === 'loaded' ? 'opacity-100 scale-100' : 'opacity-0 scale-105'} ${imageClassName || ''}`}
+                className={`w-full h-full object-cover transform-gpu will-change-[transform,opacity] transition-all duration-1000 ease-[0.16,1,0.3,1] ${status === 'loaded' ? 'opacity-100 scale-100 grayscale-0' : 'opacity-0 scale-[1.03] grayscale-[0.5]'} ${imageClassName || ''}`}
                 onLoad={() => setStatus('loaded')}
                 onError={() => setStatus('error')}
                 loading="lazy"
@@ -90,7 +97,6 @@ function useFeedData() {
                 const response = await fetch('/api/feed', { signal: controller.signal });
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 
-                // Protects against SPA returning index.html for 404 API routes
                 const contentType = response.headers.get("content-type");
                 if (!contentType || !contentType.includes("application/json")) {
                     throw new TypeError("Received non-JSON response from API.");
@@ -99,9 +105,7 @@ function useFeedData() {
                 const data = await response.json();
                 setFeed(data.cards || []);
             } catch (e: any) {
-                if (e.name !== 'AbortError') {
-                    console.error("[AURA:UI:NETWORK] Context sync failure:", e.message);
-                }
+                if (e.name !== 'AbortError') console.error("[AURA:UI:NETWORK] Context sync failure:", e.message);
             } finally {
                 setLoading(false);
             }
@@ -129,23 +133,23 @@ const CHAT_MARKDOWN_COMPONENTS: Components = {
     p: ({node, ...props}) => <p className="mb-5 last:mb-0 text-white/80 leading-[1.65] font-normal tracking-[-0.01em]" {...props} />,
     h1: ({node, ...props}) => <h1 className="text-[20px] font-medium tracking-tight text-white/95 mt-8 mb-5" {...props} />,
     h2: ({node, ...props}) => <h2 className="text-[17px] font-medium tracking-tight text-white/90 mt-6 mb-4" {...props} />,
-    h3: ({node, ...props}) => <h3 className="text-[12px] font-medium tracking-widest uppercase text-neutral-500 mt-6 mb-3 select-none" {...props} />,
+    h3: ({node, ...props}) => <h3 className="text-[12px] font-bold tracking-widest uppercase text-neutral-500 mt-6 mb-3 select-none" {...props} />,
     ul: ({node, ...props}) => <ul className="list-none space-y-3 mt-3 mb-6 text-neutral-400" {...props} />,
-    ol: ({node, ...props}) => <ol className="list-decimal pl-5 mt-3 mb-6 space-y-3 text-neutral-400 tabular-nums lining-nums marker:text-neutral-600" {...props} />,
+    ol: ({node, ...props}) => <ol className="list-decimal pl-5 mt-3 mb-6 space-y-3 text-neutral-400 tabular-nums lining-nums marker:text-neutral-600 font-mono" {...props} />,
     li: ({node, ...props}) => <li className="relative pl-5 before:absolute before:left-0 before:top-[0.6em] before:w-2 before:h-px before:bg-neutral-600" {...props} />,
     strong: ({node, ...props}) => <strong className="font-medium text-white/95" {...props} />,
     a: ({node, ...props}) => (
         <a 
-            className="text-[#34C759] hover:text-[#32d74b] underline underline-offset-4 decoration-[#34C759]/30 transition-colors duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#34C759]/30 rounded-[2px]" 
+            className="text-neutral-300 hover:text-white underline underline-offset-4 decoration-white/20 hover:decoration-white/50 transition-colors duration-300 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/20 rounded-[2px]" 
             target="_blank" 
             rel="noopener noreferrer" 
             {...props} 
         />
     ),
-    table: ({node, ...props}) => <div className="w-full overflow-x-auto my-8 rounded-[16px] border border-white/[0.04] bg-white/[0.01]"><table className="w-full text-left border-collapse text-[13px] tabular-nums lining-nums" {...props} /></div>,
-    thead: ({node, ...props}) => <thead className="bg-[#0a0a0a]/40 border-b border-white/[0.04]" {...props} />,
+    table: ({node, ...props}) => <div className="w-full overflow-x-auto my-8 rounded-[16px] border border-white/[0.04] bg-[#050505] shadow-inner"><table className="w-full text-left border-collapse text-[13px] tabular-nums lining-nums font-mono" {...props} /></div>,
+    thead: ({node, ...props}) => <thead className="bg-[#0A0A0A] border-b border-white/[0.04]" {...props} />,
     th: ({node, ...props}) => <th className="px-5 py-3.5 font-medium text-neutral-500 uppercase tracking-widest text-[10px] whitespace-nowrap select-none" {...props} />,
-    td: ({node, ...props}) => <td className="px-5 py-3.5 border-b border-white/[0.02] text-white/80" {...props} />,
+    td: ({node, ...props}) => <td className="px-5 py-3.5 border-b border-white/[0.02] text-white/80 align-top leading-relaxed" {...props} />,
     code: ({node, className, children, ...props}: any) => {
         const match = /language-(\w+)/.exec(className || '');
         const lang = match?.[1];
@@ -155,7 +159,7 @@ const CHAT_MARKDOWN_COMPONENTS: Components = {
         if (lang === 'bettingangles') return <BettingAnglesCarousel data={content} />;
         if (lang === 'editorial') return <EditorialCarousel data={content} />;
         
-        return <code className={`text-[#34C759] bg-[#34C759]/10 px-1.5 py-0.5 rounded-[4px] text-[13px] font-mono border border-[#34C759]/10 shadow-sm ${className || ''}`} {...props}>{children}</code>;
+        return <code className={`text-neutral-300 bg-white/[0.04] px-1.5 py-0.5 rounded-[6px] text-[12px] font-mono border border-white/[0.08] shadow-sm ${className || ''}`} {...props}>{children}</code>;
     },
     pre: ({node, children, ...props}: any) => {
         const hasCustomComponent = node?.children?.some((child: any) => 
@@ -165,7 +169,7 @@ const CHAT_MARKDOWN_COMPONENTS: Components = {
             )
         );
         if (hasCustomComponent) return <div className="my-8 w-full">{children}</div>;
-        return <pre className="bg-[#0a0a0a]/80 backdrop-blur-3xl p-6 rounded-[24px] overflow-x-auto border border-white/[0.04] my-6 text-[13px] leading-[1.65] shadow-sm font-mono text-neutral-300 tabular-nums lining-nums" {...props}>{children}</pre>;
+        return <pre className="bg-[#050505] p-6 rounded-[24px] overflow-x-auto border border-white/[0.04] my-6 text-[12px] leading-[1.65] shadow-inner font-mono text-neutral-300 tabular-nums lining-nums [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" {...props}>{children}</pre>;
     }
 };
 
@@ -180,35 +184,40 @@ interface NavigationProps {
 }
 
 const Navigation = React.memo(({ user, loadingAuth, onSignIn, onSignOut }: NavigationProps) => (
-    <header className="px-6 py-4 flex items-center justify-between bg-[#000000]/65 backdrop-blur-[24px] saturate-[160%] top-0 z-50 sticky border-b border-white/[0.06] select-none">
+    <header className="px-5 sm:px-8 py-4 flex items-center justify-between bg-[#000000]/60 backdrop-blur-[40px] saturate-[180%] top-0 z-50 sticky border-b border-white/[0.04] select-none supports-[backdrop-filter]:bg-[#000000]/40 transform-gpu">
         <Link 
             to="/" 
-            className="flex flex-col items-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 rounded-xl px-2 py-1 transition-all duration-300 active:scale-[0.95]"
+            className="flex flex-col items-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 rounded-lg px-2 py-1 transition-all duration-500 ease-[0.16,1,0.3,1] active:scale-[0.96] group"
             aria-label="Aura Home"
         >
-            <span className="text-[19px] font-bold tracking-[-0.05em] text-white leading-none">AURA</span>
-            <span className="text-[8px] font-mono tracking-[0.25em] text-[#34C759] uppercase mt-1 leading-none font-semibold">Enterprise Platform</span>
+            <span className="text-[20px] font-bold tracking-[-0.04em] text-white/95 leading-none group-hover:text-white transition-colors">AURA</span>
+            <span className="text-[8.5px] font-mono tracking-[0.25em] text-neutral-500 uppercase mt-1 leading-none font-bold">Live Sports Hub</span>
         </Link>
         
         <div className="flex items-center gap-4">
             {loadingAuth ? (
-                <div className="h-8.5 w-24 rounded-full bg-white/[0.02] border border-white/[0.04] animate-pulse flex items-center justify-center text-[10px] text-neutral-500 font-mono tracking-widest uppercase">
+                <div className="h-9 w-24 rounded-full bg-white/[0.02] border border-white/[0.04] relative overflow-hidden flex items-center justify-center text-[10px] text-neutral-500 font-mono tracking-widest uppercase">
+                    <motion.div 
+                        className="absolute inset-0 w-[200%] h-full bg-gradient-to-r from-transparent via-white/[0.04] to-transparent -skew-x-12"
+                        animate={{ x: ['-100%', '100%'] }}
+                        transition={{ repeat: Infinity, duration: 1.5, ease: 'linear' }}
+                    />
                     Syncing
                 </div>
             ) : user ? (
-                <div className="flex items-center gap-3 bg-white/[0.02] border border-white/[0.05] pl-3 pr-4 py-1.5 rounded-full hover:bg-white/[0.04] transition-all duration-300 backdrop-blur-md">
+                <div className="flex items-center gap-3 bg-white/[0.015] border border-white/[0.04] pl-2.5 pr-4 py-1.5 rounded-full hover:bg-white/[0.04] hover:border-white/[0.08] transition-all duration-300 ease-[0.16,1,0.3,1] backdrop-blur-md shadow-sm">
                     {user.photoURL ? (
-                        <img src={user.photoURL} alt={user.displayName || "User"} referrerPolicy="no-referrer" className="h-[22px] w-[22px] rounded-full object-cover border border-white/10" />
+                        <img src={user.photoURL} alt={user.displayName || "User"} referrerPolicy="no-referrer" className="h-[24px] w-[24px] rounded-full object-cover border border-white/10 shrink-0" />
                     ) : (
-                        <div className="h-[22px] w-[22px] rounded-full bg-white/10 border border-white/10 flex items-center justify-center text-[10px] font-bold text-white uppercase select-none">
+                        <div className="h-[24px] w-[24px] rounded-full bg-gradient-to-tr from-neutral-800 to-neutral-700 border border-white/10 flex items-center justify-center text-[11px] font-bold text-white uppercase select-none shrink-0">
                             {user.email?.charAt(0) || 'A'}
                         </div>
                     )}
-                    <div className="flex flex-col text-left">
-                        <span className="text-[11px] font-medium text-white/95 leading-tight truncate max-w-[100px]" title={user.email}>
+                    <div className="flex flex-col text-left justify-center">
+                        <span className="text-[11px] font-medium text-white/95 leading-none truncate max-w-[100px] pb-0.5" title={user.email}>
                             {user.displayName || user.email?.split('@')[0]}
                         </span>
-                        <button onClick={onSignOut} className="text-[8px] font-mono text-neutral-400 hover:text-[#FF3B30] text-left leading-none transition-colors mt-0.5 uppercase tracking-widest outline-none cursor-pointer">
+                        <button onClick={onSignOut} className="text-[9px] font-mono text-neutral-500 hover:text-[#FF3B30] text-left leading-none transition-colors uppercase tracking-widest outline-none cursor-pointer">
                             Disconnect
                         </button>
                     </div>
@@ -216,13 +225,13 @@ const Navigation = React.memo(({ user, loadingAuth, onSignIn, onSignOut }: Navig
             ) : (
                 <button 
                     onClick={onSignIn}
-                    className="h-8.5 px-4.5 rounded-full bg-white text-black font-semibold text-[11px] tracking-widest uppercase shadow-[0_2px_12px_rgba(255,255,255,0.08)] hover:bg-neutral-200 active:scale-[0.95] duration-300 ease-[0.16,1,0.3,1] transition-all cursor-pointer flex items-center gap-1.5"
+                    className="h-9 px-5 rounded-full bg-white text-black font-semibold text-[11px] tracking-widest uppercase shadow-[0_2px_15px_rgba(255,255,255,0.1)] hover:bg-neutral-200 active:scale-[0.96] duration-500 ease-[0.16,1,0.3,1] transition-all cursor-pointer flex items-center gap-2 outline-none focus-visible:ring-2 focus-visible:ring-white/50"
                 >
                     <svg className="w-3.5 h-3.5 fill-black" viewBox="0 0 48 48">
-                        <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
-                        <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
-                        <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
-                        <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
+                        <path fill="currentColor" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
+                        <path fill="currentColor" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
+                        <path fill="currentColor" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
+                        <path fill="currentColor" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
                     </svg>
                     Connect
                 </button>
@@ -238,7 +247,6 @@ Navigation.displayName = 'Navigation';
 const FeedItem = React.memo(({ item }: { item: FeedCard }) => {
     const destinationUrl = `/story/${item.slug || item.id}`;
 
-    // Defensive parsing for dates
     const publishedDate = useMemo(() => {
         if (!item.publishedAt) return '';
         const d = new Date(item.publishedAt);
@@ -253,20 +261,20 @@ const FeedItem = React.memo(({ item }: { item: FeedCard }) => {
             <Link 
                to={destinationUrl}
                aria-label={`Prediction Market: ${item.headline}`}
-               className="block w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20 rounded-[32px] outline-none mb-8"
+               className="block w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20 rounded-[32px] outline-none mb-8 group"
             >
                 <motion.div
-                   whileHover={{ y: -4, scale: 1.008 }}
-                   whileTap={{ scale: 0.975 }}
-                   transition={{ type: "spring", stiffness: 350, damping: 25 }}
-                   className="w-full relative group bg-white/[0.015] backdrop-blur-3xl border border-white/[0.04] rounded-[32px] overflow-hidden hover:bg-white/[0.035] hover:border-white/[0.08] shadow-[0_8px_30px_rgba(0,0,0,0.12)] hover:shadow-[0_16px_50px_rgba(0,0,0,0.25)] p-7 sm:p-8 transition-colors duration-300 pointer-events-auto cursor-pointer"
+                   whileHover={{ y: -4, scale: 1.005 }}
+                   whileTap={{ scale: 0.98 }}
+                   transition={SPRING_TRANSITION}
+                   className="w-full relative bg-white/[0.015] backdrop-blur-3xl border border-white/[0.04] rounded-[32px] overflow-hidden hover:bg-white/[0.025] hover:border-white/[0.08] shadow-[0_8px_30px_rgba(0,0,0,0.12)] hover:shadow-[0_16px_50px_rgba(0,0,0,0.25)] p-7 sm:p-8 transition-colors duration-500 pointer-events-auto cursor-pointer transform-gpu"
                 >
-                    <div className="flex items-center justify-between mb-5">
+                    <div className="flex items-center justify-between mb-5 select-none">
                         <div className="flex items-center gap-2">
-                            <span className="text-[10px] font-medium text-[#34C759] uppercase tracking-widest select-none">Prediction Market</span>
+                            <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">Prediction Market</span>
                             {item.priority === 'breaking' && (
-                                <div className="flex items-center gap-1.5 ml-2 bg-[#FF3B30]/10 px-2 py-0.5 rounded-[4px] border border-[#FF3B30]/20 select-none">
-                                    <span className="w-1.5 h-1.5 bg-[#FF3B30] rounded-full animate-pulse" />
+                                <div className="flex items-center gap-1.5 ml-2 bg-[#FF3B30]/10 px-2 py-0.5 rounded-[4px] border border-[#FF3B30]/20">
+                                    <span className="w-1.5 h-1.5 bg-[#FF3B30] rounded-full animate-pulse shadow-[0_0_8px_rgba(255,59,48,0.6)]" />
                                     <span className="text-[9px] font-bold text-[#FF3B30] uppercase tracking-widest">Trending</span>
                                 </div>
                             )}
@@ -278,23 +286,23 @@ const FeedItem = React.memo(({ item }: { item: FeedCard }) => {
                     </h4>
                     
                     {uniqueOptions.length > 1 && (
-                        <div className="flex flex-wrap gap-2 mb-8">
+                        <div className="flex flex-wrap gap-2 mb-8 select-none">
                             {uniqueOptions.slice(0, 4).map((word: string, i: number) => (
-                                <span key={i} className="text-[13px] font-medium text-neutral-400 bg-white/[0.03] px-3.5 py-1.5 rounded-[8px] border border-white/[0.05] select-none">
+                                <span key={i} className="text-[12px] font-medium text-neutral-400 bg-[#050505] px-3.5 py-1.5 rounded-[8px] border border-white/[0.04] shadow-sm">
                                     {word}
                                 </span>
                             ))}
                         </div>
                     )}
 
-                    <div className="flex items-center justify-between pt-6 mt-2 border-t border-white/[0.04]">
+                    <div className="flex items-center justify-between pt-6 mt-2 border-t border-white/[0.04] select-none">
                         <div className="flex flex-col">
-                            <div className="text-[10px] text-neutral-500 font-medium uppercase tracking-widest mb-1.5 select-none">Implied Yes</div>
+                            <div className="text-[10px] text-neutral-500 font-medium uppercase tracking-widest mb-1.5">Implied Yes</div>
                             <div className="text-[32px] font-medium text-white/95 tracking-tighter tabular-nums lining-nums leading-none">
                                 {item.metadata?.yes_price || 0}<span className="text-[18px] text-neutral-600 ml-0.5 font-normal">%</span>
                             </div>
                         </div>
-                        <span className="bg-white/10 group-hover:bg-white/20 text-white border border-white/10 text-[13px] font-medium px-6 py-2.5 rounded-full transition-all duration-300 ease-[0.16,1,0.3,1] select-none shadow-[0_2px_12px_rgba(255,255,255,0.05)]">
+                        <span className="bg-white/[0.05] group-hover:bg-white/[0.1] text-white border border-white/[0.08] text-[12px] font-bold uppercase tracking-widest px-6 py-3 rounded-full transition-all duration-500 ease-[0.16,1,0.3,1] shadow-sm">
                              View Order Book
                         </span>
                     </div>
@@ -307,42 +315,42 @@ const FeedItem = React.memo(({ item }: { item: FeedCard }) => {
         <Link 
            to={destinationUrl}
            aria-label={`Story: ${item.headline}`}
-           className="block w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20 rounded-[32px] outline-none mb-8"
+           className="block w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20 rounded-[32px] outline-none mb-8 group"
         >
             <motion.div
-               whileHover={{ y: -4, scale: 1.008 }}
-               whileTap={{ scale: 0.975 }}
-               transition={{ type: "spring", stiffness: 350, damping: 25 }}
-               className="w-full relative group bg-white/[0.015] backdrop-blur-3xl border border-white/[0.04] rounded-[32px] overflow-hidden hover:bg-white/[0.035] hover:border-white/[0.08] shadow-[0_8px_30px_rgba(0,0,0,0.12)] hover:shadow-[0_16px_50px_rgba(0,0,0,0.25)] transition-colors duration-300 cursor-pointer"
+               whileHover={{ y: -4, scale: 1.005 }}
+               whileTap={{ scale: 0.98 }}
+               transition={SPRING_TRANSITION}
+               className="w-full relative bg-white/[0.015] backdrop-blur-3xl border border-white/[0.04] rounded-[32px] overflow-hidden hover:bg-white/[0.025] hover:border-white/[0.08] shadow-[0_8px_30px_rgba(0,0,0,0.12)] hover:shadow-[0_16px_40px_rgba(0,0,0,0.2)] transition-colors duration-500 cursor-pointer transform-gpu"
             >
                 {item.image_url && (
-                    <div className="w-full aspect-[21/9] sm:aspect-[16/9] relative bg-[#0a0a0a] border-b border-white/[0.02]">
+                    <div className="w-full aspect-[21/9] sm:aspect-[16/9] relative bg-[#050505] border-b border-white/[0.02] overflow-hidden">
                         <SafeImage 
                             src={item.image_url} 
                             alt={item.headline}
                             containerClassName="absolute inset-0 z-0"
                             imageClassName="opacity-80 group-hover:opacity-100 grayscale-[0.2] group-hover:grayscale-0 group-hover:scale-[1.03]"
                         />
-                        <div className="absolute inset-0 bg-gradient-to-t from-[#0a0a0a] via-[#0a0a0a]/20 to-transparent opacity-90 z-10 pointer-events-none" />
+                        <div className="absolute inset-0 bg-gradient-to-t from-[#000000] via-[#000000]/20 to-transparent opacity-90 z-10 pointer-events-none" />
                     </div>
                 )}
 
                 <div className={`flex flex-col p-7 sm:p-8 ${item.image_url ? '-mt-16 relative z-20' : ''}`}>
                    <div className="flex items-center gap-3 mb-5 select-none font-sans">
-                       <span className={`text-[10px] font-medium uppercase tracking-widest ${item.image_url ? 'text-white/90 bg-black/60 backdrop-blur-md px-2.5 py-1 rounded-[6px] border border-white/10 shadow-sm' : 'text-neutral-500'}`}>
+                       <span className={`text-[10px] font-bold uppercase tracking-widest ${item.image_url ? 'text-white/95 bg-[#000]/60 backdrop-blur-md px-2.5 py-1.5 rounded-[6px] border border-white/10 shadow-sm' : 'text-neutral-500'}`}>
                            {item.category || 'Intelligence'}
                        </span>
                        {item.priority === 'high_live' && (
-                           <span className="text-[10px] font-bold text-[#FF3B30] uppercase tracking-widest flex items-center gap-1.5 bg-[#FF3B30]/10 px-2.5 py-1 rounded-[6px] border border-[#FF3B30]/20">
-                               <span className="w-1.5 h-1.5 bg-[#FF3B30] rounded-full animate-pulse" /> Live
+                           <span className="text-[10px] font-bold text-[#FF3B30] uppercase tracking-widest flex items-center gap-1.5 bg-[#FF3B30]/10 px-2.5 py-1.5 rounded-[6px] border border-[#FF3B30]/20">
+                               <span className="w-1.5 h-1.5 bg-[#FF3B30] rounded-full animate-pulse shadow-[0_0_8px_rgba(255,59,48,0.6)]" /> Live
                            </span>
                        )}
                    </div>
                    
-                   <h4 className="text-[22px] sm:text-[26px] font-medium text-white/95 leading-[1.25] mb-3.5 tracking-tight group-hover:text-white transition-colors duration-300">
+                   <h4 className="text-[22px] sm:text-[26px] font-medium text-white/95 leading-[1.25] mb-3.5 tracking-tight group-hover:text-white transition-colors duration-500">
                        {item.headline}
                    </h4>
-                   <p className="text-[15px] text-neutral-400 leading-[1.6] line-clamp-3 mb-6 font-normal">
+                   <p className="text-[15px] text-neutral-400 leading-[1.65] line-clamp-3 mb-6 font-normal tracking-[-0.01em]">
                        {item.summary}
                    </p>
 
@@ -350,12 +358,12 @@ const FeedItem = React.memo(({ item }: { item: FeedCard }) => {
                    {item.metadata?.kalshi_market_injected && (
                        <div className="mt-2 mb-4 p-5 rounded-[20px] bg-white/[0.02] border border-white/[0.04] transition-colors relative overflow-hidden group-hover:bg-white/[0.035] font-sans">
                             <div className="flex items-center gap-2 mb-4 relative z-10 select-none">
-                                <span className="text-[#34C759] text-[10px] font-medium uppercase tracking-widest inline-flex items-center gap-1.5 bg-[#34C759]/10 px-2 py-0.5 rounded-[4px] border border-[#34C759]/20">
-                                    <span className="w-1.5 h-1.5 bg-[#34C759] rounded-full animate-pulse shadow-sm" />
+                                <span className="text-neutral-400 text-[10px] font-bold uppercase tracking-widest inline-flex items-center gap-1.5 bg-white/[0.04] px-2 py-0.5 rounded-[4px] border border-white/[0.08]">
+                                    <Activity className="w-2.5 h-2.5 text-neutral-400" />
                                     Live Market
                                 </span>
                                 <span className="text-white/10 mx-1">•</span>
-                                <span className="text-[10px] text-neutral-500 font-medium uppercase tracking-widest">Prediction</span>
+                                <span className="text-[10px] text-neutral-500 font-mono uppercase tracking-widest">Prediction</span>
                             </div>
                             
                             <h4 className="text-[14px] font-medium text-white/90 leading-snug mb-5 tracking-tight pr-4 relative z-10 line-clamp-2">
@@ -363,23 +371,23 @@ const FeedItem = React.memo(({ item }: { item: FeedCard }) => {
                             </h4>
 
                             <div className="flex items-center justify-between gap-3 relative z-10 select-none">
-                                <div className="flex-1 bg-black/40 group-hover:bg-black/60 transition-colors duration-300 rounded-[12px] p-4 border border-white/[0.04] flex flex-col gap-1 cursor-pointer">
-                                    <div className="text-[10px] font-medium text-neutral-500 uppercase tracking-widest transition-colors">Yes</div>
-                                    <div className="text-[18px] font-medium text-[#34C759] tabular-nums lining-nums leading-none mt-1.5">{item.metadata.kalshi_yes_price}%</div>
+                                <div className="flex-1 bg-[#050505] group-hover:bg-[#0A0A0C] transition-colors duration-500 rounded-[12px] p-4 border border-white/[0.04] flex flex-col gap-1 cursor-pointer">
+                                    <div className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest transition-colors">Yes</div>
+                                    <div className="text-[18px] font-medium text-white/95 tabular-nums lining-nums leading-none mt-1.5">{item.metadata.kalshi_yes_price}%</div>
                                     {item.metadata.kalshi_american_odds && (
-                                        <div className="text-[11px] font-mono text-[#34C759]/60 mt-1.5 tabular-nums lining-nums truncate">{item.metadata.kalshi_american_odds}</div>
+                                        <div className="text-[11px] font-mono text-neutral-500 mt-1.5 tabular-nums lining-nums truncate">{item.metadata.kalshi_american_odds}</div>
                                     )}
                                 </div>
-                                <div className="flex-1 bg-black/40 group-hover:bg-black/60 transition-colors duration-300 rounded-[12px] p-4 border border-white/[0.04] flex flex-col gap-1 cursor-pointer">
-                                    <div className="text-[10px] font-medium text-neutral-500 uppercase tracking-widest transition-colors">No</div>
-                                    <div className="text-[18px] font-medium text-white/80 tabular-nums lining-nums leading-none mt-1.5">{100 - (item.metadata.kalshi_yes_price || 0)}%</div>
+                                <div className="flex-1 bg-[#050505] group-hover:bg-[#0A0A0C] transition-colors duration-500 rounded-[12px] p-4 border border-white/[0.04] flex flex-col gap-1 cursor-pointer">
+                                    <div className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest transition-colors">No</div>
+                                    <div className="text-[18px] font-medium text-neutral-400 tabular-nums lining-nums leading-none mt-1.5">{100 - (item.metadata.kalshi_yes_price || 0)}%</div>
                                 </div>
                             </div>
                        </div>
                    )}
 
                    <div className="mt-4 flex items-center justify-between pt-5 border-t border-white/[0.04] font-sans">
-                       <div className="flex items-center gap-2 text-[10px] font-mono text-neutral-500 uppercase tracking-widest select-none tabular-nums">
+                       <div className="flex items-center gap-2 text-[10px] font-mono text-neutral-500 uppercase tracking-widest select-none tabular-nums lining-nums">
                            <span>{item.source || 'Aura Protocol'}</span>
                            {publishedDate && (
                                <>
@@ -398,13 +406,36 @@ FeedItem.displayName = 'FeedItem';
 
 function FeedSkeleton() {
     return (
-        <div className="w-full relative bg-white/[0.01] border border-white/[0.02] rounded-[32px] overflow-hidden mb-8">
-            <div className="w-full aspect-[21/9] sm:aspect-[16/9] bg-white/[0.02] animate-pulse border-b border-white/[0.02]" />
+        <div className="w-full relative bg-white/[0.01] border border-white/[0.02] rounded-[32px] overflow-hidden mb-8 shadow-sm">
+            <div className="w-full aspect-[21/9] sm:aspect-[16/9] bg-[#0A0A0C] border-b border-white/[0.02] relative overflow-hidden">
+                <motion.div 
+                    className="absolute inset-0 w-[200%] h-full bg-gradient-to-r from-transparent via-white/[0.03] to-transparent -skew-x-12"
+                    animate={{ x: ['-100%', '100%'] }}
+                    transition={{ repeat: Infinity, duration: 1.5, ease: 'linear' }}
+                />
+            </div>
             <div className="p-7 sm:p-8 -mt-16 relative z-10">
-                <div className="h-5 w-24 bg-white/[0.03] rounded-md mb-6 animate-pulse" />
-                <div className="h-7 w-3/4 bg-white/[0.03] rounded-lg mb-4 animate-pulse" />
-                <div className="h-5 w-full bg-white/[0.02] rounded-md mb-3 animate-pulse" />
-                <div className="h-5 w-5/6 bg-white/[0.02] rounded-md animate-pulse" />
+                <div className="h-4 w-24 bg-white/[0.04] rounded-[4px] mb-6 relative overflow-hidden">
+                    <motion.div 
+                        className="absolute inset-0 w-[200%] h-full bg-gradient-to-r from-transparent via-white/[0.06] to-transparent -skew-x-12"
+                        animate={{ x: ['-100%', '100%'] }}
+                        transition={{ repeat: Infinity, duration: 1.5, ease: 'linear' }}
+                    />
+                </div>
+                <div className="h-6 w-3/4 bg-white/[0.04] rounded-[6px] mb-4 relative overflow-hidden">
+                    <motion.div 
+                        className="absolute inset-0 w-[200%] h-full bg-gradient-to-r from-transparent via-white/[0.06] to-transparent -skew-x-12"
+                        animate={{ x: ['-100%', '100%'] }}
+                        transition={{ repeat: Infinity, duration: 1.5, ease: 'linear' }}
+                    />
+                </div>
+                <div className="h-4 w-full bg-white/[0.03] rounded-[4px] mb-3 relative overflow-hidden">
+                    <motion.div 
+                        className="absolute inset-0 w-[200%] h-full bg-gradient-to-r from-transparent via-white/[0.06] to-transparent -skew-x-12"
+                        animate={{ x: ['-100%', '100%'] }}
+                        transition={{ repeat: Infinity, duration: 1.5, ease: 'linear' }}
+                    />
+                </div>
             </div>
         </div>
     );
@@ -415,7 +446,7 @@ function HomeFeed() {
 
   if (loading) {
      return (
-       <div className="w-full max-w-2xl px-4 flex flex-col mt-4" aria-busy="true" aria-label="Loading feed">
+       <div className="w-full max-w-2xl px-2 sm:px-4 flex flex-col mt-4" aria-busy="true" aria-label="Loading feed">
         <FeedSkeleton />
         <FeedSkeleton />
        </div>
@@ -424,7 +455,7 @@ function HomeFeed() {
 
   if (feed.length === 0) {
       return (
-         <div className="text-neutral-500 text-[13px] font-medium tracking-wide mt-12 text-center bg-white/[0.015] border border-white/[0.04] p-10 rounded-[32px] border-dashed select-none">
+         <div className="text-neutral-500 text-[11px] font-mono tracking-widest mt-12 text-center bg-white/[0.015] border border-white/[0.04] p-10 rounded-[32px] border-dashed select-none uppercase">
              Intelligence feed synchronizing...
          </div>
       );
@@ -432,9 +463,18 @@ function HomeFeed() {
 
   return (
       <div className="w-full max-w-2xl flex flex-col mx-auto mt-4 px-2">
-         {feed.map((item) => (
-             <FeedItem key={item.id} item={item} />
-         ))}
+         <AnimatePresence mode="popLayout">
+             {feed.map((item, i) => (
+                 <motion.div
+                    key={item.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.5, delay: Math.min(i * 0.1, 0.4), ease: [0.16, 1, 0.3, 1] }}
+                 >
+                     <FeedItem item={item} />
+                 </motion.div>
+             ))}
+         </AnimatePresence>
       </div>
   );
 }
@@ -449,25 +489,90 @@ interface ChatInterfaceProps {
   loadingAuth: boolean;
 }
 
+type SubdomainTab = 'sports' | 'workspace' | 'kalshi';
+
 function ChatInterface({ user, token, onSignIn, loadingAuth }: ChatInterfaceProps) {
   const [prompt, setPrompt] = useState('');
   const [loading, setLoading] = useState(false);
   const [messages, setMessages] = useState<AuraChatMessage[]>([]);
-  const [activeSubdomain, setActiveSubdomain] = useState<'sports' | 'workspace'>('sports');
+  const [activeSubdomain, setActiveSubdomain] = useState<SubdomainTab>('sports');
   const endRef = useRef<HTMLDivElement>(null);
 
+  // Gemini 3.5 Vision integration states
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [selectedMime, setSelectedMime] = useState<string | null>(null);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+
   useEffect(() => {
-      // Small timeout ensures DOM layout is computed before scrolling
       const timer = setTimeout(() => {
           endRef.current?.scrollIntoView({ behavior: 'smooth' });
-      }, 100);
+      }, 150);
       return () => clearTimeout(timer);
   }, [messages, loading]);
+
+  useEffect(() => {
+      return () => {
+          if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+      };
+  }, [imagePreviewUrl]);
+
+  const processFile = (file: File) => {
+      if (!file.type.startsWith('image/')) {
+          alert('Please upload an image file (PNG, JPG, etc) representing a sports asset.');
+          return;
+      }
+      const reader = new FileReader();
+      reader.onloadend = () => {
+          const base64String = (reader.result as string).split(',')[1];
+          setSelectedImage(base64String);
+          setSelectedMime(file.type);
+          if (imagePreviewUrl) {
+              URL.revokeObjectURL(imagePreviewUrl);
+          }
+          setImagePreviewUrl(URL.createObjectURL(file));
+      };
+      reader.readAsDataURL(file);
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (file) {
+          processFile(file);
+      }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+      e.preventDefault();
+      setIsDragging(true);
+  };
+
+  const handleDragLeave = () => {
+      setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+      e.preventDefault();
+      setIsDragging(false);
+      const file = e.dataTransfer.files?.[0];
+      if (file) {
+          processFile(file);
+      }
+  };
+
+  const clearAttachment = () => {
+      setSelectedImage(null);
+      setSelectedMime(null);
+      if (imagePreviewUrl) {
+          URL.revokeObjectURL(imagePreviewUrl);
+      }
+      setImagePreviewUrl(null);
+  };
 
   const handleQuery = async (e?: React.FormEvent, presetPrompt?: string) => {
     if (e) e.preventDefault();
     const activePrompt = presetPrompt || prompt;
-    if (!activePrompt.trim() || loading) return;
+    if ((!activePrompt.trim() && !selectedImage) || loading) return;
     
     const history: AuraHistoryMessage[] = messages.reduce<AuraHistoryMessage[]>((acc, m) => {
        if (m.role === 'user' && m.content) acc.push({ role: 'user', content: m.content });
@@ -478,11 +583,25 @@ function ChatInterface({ user, token, onSignIn, loadingAuth }: ChatInterfaceProp
        return acc;
     }, []);
 
-    setMessages(prev => [...prev, { id: generateId('usr'), role: 'user', content: activePrompt }]);
+    const userMessageImg = imagePreviewUrl || undefined;
+    const sendImg = selectedImage;
+    const sendMime = selectedMime;
+
+    // Reset attachment states right away for snappy user feedback
+    setSelectedImage(null);
+    setSelectedMime(null);
+    setImagePreviewUrl(null);
+
+    setMessages(prev => [...prev, { 
+        id: generateId('usr'), 
+        role: 'user', 
+        content: activePrompt || "Analyze sports intelligence asset",
+        image: userMessageImg
+    }]);
     setLoading(true);
     setPrompt('');
 
-    if (activePrompt.toLowerCase().trim() === 'schedule' || activePrompt.toLowerCase().trim() === 'mock') {
+    if (activePrompt && (activePrompt.toLowerCase().trim() === 'schedule' || activePrompt.toLowerCase().trim() === 'mock')) {
          setTimeout(() => {
             setMessages(prev => [
                 ...prev,
@@ -495,13 +614,17 @@ function ChatInterface({ user, token, onSignIn, loadingAuth }: ChatInterfaceProp
     
     try {
         const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-        if (token) {
-            headers['Authorization'] = `Bearer ${token}`;
-        }
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        
         const response = await fetch('/api/chat', {
             method: 'POST',
             headers,
-            body: JSON.stringify({ message: activePrompt, history })
+            body: JSON.stringify({ 
+                message: activePrompt, 
+                history,
+                image: sendImg,
+                imageMime: sendMime
+            })
         });
 
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
@@ -526,7 +649,7 @@ function ChatInterface({ user, token, onSignIn, loadingAuth }: ChatInterfaceProp
       switch (artifact.resolution_state) {
           case 'GROUNDING_FAULT':
               return (
-                 <div key={artifact.id} className="bg-[#FF3B30]/10 border border-[#FF3B30]/20 rounded-[20px] p-6 mb-5 text-center backdrop-blur-md">
+                 <div key={artifact.id} className="bg-[#FF3B30]/10 border border-[#FF3B30]/20 rounded-[20px] p-6 mb-5 text-center backdrop-blur-md shadow-sm">
                      <AlertCircle className="h-6 w-6 text-[#FF3B30] mx-auto mb-3" strokeWidth={1.5} />
                      <div className="text-[10px] font-bold tracking-widest uppercase text-[#FF3B30] select-none">Execution Fault</div>
                      <div className="text-[13px] text-[#FF3B30]/80 mt-2 leading-relaxed font-mono">{artifact.context_summary}</div>
@@ -535,7 +658,7 @@ function ChatInterface({ user, token, onSignIn, loadingAuth }: ChatInterfaceProp
           case 'NO_GAMES_SCHEDULED':
           case 'OFF_SEASON':
                return (
-                 <div key={artifact.id} className="bg-white/[0.01] border border-white/[0.04] border-dashed rounded-[24px] p-10 mb-5 text-center backdrop-blur-sm">
+                 <div key={artifact.id} className="bg-white/[0.015] border border-white/[0.04] border-dashed rounded-[24px] p-10 mb-5 text-center backdrop-blur-sm">
                      {artifact.resolution_state === 'NO_GAMES_SCHEDULED' ? <CalendarIcon className="h-6 w-6 text-neutral-600 mx-auto mb-3" strokeWidth={1.5} /> : <CloudFog className="h-6 w-6 text-neutral-600 mx-auto mb-3" strokeWidth={1.5} />}
                      <div className="text-[10px] font-medium text-neutral-500 tracking-widest uppercase select-none">{artifact.resolution_state === 'OFF_SEASON' ? 'Off-Season' : 'No Events Found'}</div>
                      <div className="text-[13px] text-neutral-400 mt-2 font-mono">{artifact.context_summary}</div>
@@ -558,15 +681,15 @@ function ChatInterface({ user, token, onSignIn, loadingAuth }: ChatInterfaceProp
 
       if (artifact.type === 'TRUST_GATE_RECEIPT' && artifact.resolution_state === 'DEPLOYED') {
            return (
-              <div key={artifact.id} className="bg-white/[0.02] border border-white/[0.04] rounded-[16px] p-6 mb-5 font-mono text-[11px] text-neutral-400 tabular-nums select-none">
+              <div key={artifact.id} className="bg-[#050505] border border-white/[0.04] rounded-[16px] p-6 mb-5 font-mono text-[11px] text-neutral-400 tabular-nums select-none shadow-inner">
                   <div className="flex justify-between items-center mb-5 text-neutral-300 border-b border-white/[0.04] pb-3">
                       <span className="flex items-center gap-2 uppercase tracking-widest font-sans font-medium"><ShieldCheck className="h-4 w-4" /> System Receipt</span>
-                      {artifact.data?.verified && <span className="bg-white/10 px-2 py-0.5 rounded-sm text-white">VERIFIED</span>}
+                      {artifact.data?.verified && <span className="bg-white/10 px-2 py-0.5 rounded-[4px] text-white font-bold">VERIFIED</span>}
                   </div>
                   <div className="space-y-4 mt-2">
                       <div className="flex justify-between items-center"><span>Status</span><span className="text-white">{artifact.data?.status || 'Active'}</span></div>
                       <div className="flex justify-between items-center"><span>Arch</span><span>Cloud Run</span></div>
-                      <div className="flex justify-between items-center"><span>Endpoint</span><span className="truncate max-w-[150px]">{artifact.data?.url || 'Internal'}</span></div>
+                      <div className="flex justify-between items-center"><span>Endpoint</span><span className="truncate max-w-[150px] lowercase text-white">{artifact.data?.url || 'Internal'}</span></div>
                   </div>
               </div>
           );
@@ -582,7 +705,7 @@ function ChatInterface({ user, token, onSignIn, loadingAuth }: ChatInterfaceProp
                   </div>
                   {artifact.data?.groundingLinks && artifact.data.groundingLinks.length > 0 && (
                      <div className="flex flex-col gap-3 mt-6 pt-5 border-t border-white/[0.04]">
-                         <div className="text-[10px] font-medium text-neutral-500 uppercase tracking-widest pl-1 select-none">Sources Verified</div>
+                         <div className="text-[9px] font-mono text-neutral-500 uppercase tracking-widest pl-1 select-none font-bold">Sources Verified</div>
                          <div className="flex flex-wrap gap-2.5">
                              {artifact.data.groundingLinks.map((link: { uri: string; title: string; }, idx: number) => (
                                  <a 
@@ -590,9 +713,9 @@ function ChatInterface({ user, token, onSignIn, loadingAuth }: ChatInterfaceProp
                                     href={link.uri} 
                                     target="_blank" 
                                     rel="noopener noreferrer" 
-                                    className="flex items-center gap-2 px-3.5 py-2 bg-white/[0.02] hover:bg-white/[0.04] text-neutral-400 hover:text-neutral-200 border border-white/[0.04] hover:border-white/[0.08] rounded-full text-[11px] font-mono tracking-wide transition-all duration-300 ease-[0.16,1,0.3,1] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/30 active:scale-[0.98]"
+                                    className="flex items-center gap-2 px-3 py-1.5 bg-white/[0.02] hover:bg-white/[0.05] text-neutral-400 hover:text-neutral-200 border border-white/[0.04] hover:border-white/[0.08] rounded-[6px] text-[10px] font-mono tracking-wide transition-all duration-500 ease-[0.16,1,0.3,1] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/30 active:scale-[0.98]"
                                 >
-                                     <LinkIcon className="h-3 w-3 opacity-50" />
+                                     <LinkIcon className="h-3 w-3 opacity-50 shrink-0" />
                                      <span className="truncate max-w-[200px]">{link.title || 'Source'}</span>
                                  </a>
                              ))}
@@ -604,52 +727,99 @@ function ChatInterface({ user, token, onSignIn, loadingAuth }: ChatInterfaceProp
       }
 
       return (
-           <div key={artifact.id} className="bg-white/[0.02] p-5 rounded-[20px] mb-5 border border-white/[0.04] text-[14px] text-neutral-300 font-normal leading-relaxed">
+           <div key={artifact.id} className="bg-white/[0.02] p-5 rounded-[24px] mb-5 border border-white/[0.04] text-[14px] text-neutral-300 font-normal leading-relaxed shadow-sm">
                {artifact.context_summary}
            </div>
       );
   }, []);
 
+  const tabs: { id: SubdomainTab; label: string }[] = [
+    { id: 'sports', label: 'Sports' },
+    { id: 'workspace', label: 'Workspace' },
+    { id: 'kalshi', label: 'Odds' }
+  ];
+
   return (
     <>
-      <SEO title="Aura | Sports Intelligence Engine" canonicalPath="/" />
-      <main className="flex-1 overflow-y-auto p-4 sm:p-6 max-w-3xl mx-auto w-full flex flex-col pt-6 pb-[180px] sm:pb-[200px] relative z-10 scroll-smooth [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+      <SEO title="Aura | Sports Intelligence" canonicalPath="/" />
+      <main className={`flex-1 overflow-y-auto p-4 sm:p-6 ${activeSubdomain === 'kalshi' ? 'max-w-6xl' : 'max-w-3xl'} mx-auto w-full flex flex-col pt-6 pb-[180px] sm:pb-[200px] relative z-10 scroll-smooth [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]`}>
+          
+          {/* ============================================================================ */}
+          {/* APP LAUNCHER (Empty State) */}
+          {/* ============================================================================ */}
           {messages.length === 0 && !loading && (
               <div className="flex flex-col items-center justify-center h-full mt-0 w-full animate-in fade-in duration-1000 ease-[0.16,1,0.3,1]">
                   
-                  {/* Subdomain Explorer Toggle */}
-                  <div className="flex bg-[#151517]/60 backdrop-blur-3xl border border-white/[0.04] p-1.5 rounded-[20px] max-w-md w-full mb-8 select-none shadow-xl relative z-10">
-                      <button 
-                         type="button"
-                         onClick={() => setActiveSubdomain('sports')}
-                         className={`flex-1 py-2.5 px-4 rounded-[14px] text-[10px] font-bold uppercase tracking-wider transition-all duration-300 ease-[0.16,1,0.3,1] cursor-pointer ${activeSubdomain === 'sports' ? 'bg-[#34C759] text-black shadow-[0_2px_12px_rgba(52,199,89,0.3)] font-extrabold' : 'text-neutral-400 hover:text-white hover:bg-white/[0.01]'}`}
-                      >
-                         Sports Market Hub
-                      </button>
-                      <button 
-                         type="button"
-                         onClick={() => setActiveSubdomain('workspace')}
-                         className={`flex-1 py-2.5 px-4 rounded-[14px] text-[10px] font-bold uppercase tracking-wider transition-all duration-300 ease-[0.16,1,0.3,1] cursor-pointer ${activeSubdomain === 'workspace' ? 'bg-[#34C759] text-black shadow-[0_2px_12px_rgba(52,199,89,0.3)] font-extrabold' : 'text-neutral-400 hover:text-white hover:bg-white/[0.01]'}`}
-                      >
-                         Workspace Blueprint
-                      </button>
+                  {/* SOTA Physical Segmented Control */}
+                  <div className="flex bg-[#1C1C1E]/80 backdrop-blur-md border border-white/[0.04] p-1 rounded-full max-w-[450px] w-full mb-12 select-none shadow-[0_8px_32px_rgba(0,0,0,0.4)] relative z-10 mx-auto">
+                      {tabs.map((tab) => {
+                          const isActive = activeSubdomain === tab.id;
+                          return (
+                              <button 
+                                 key={tab.id}
+                                 type="button"
+                                 onClick={() => setActiveSubdomain(tab.id)}
+                                 className={`relative flex-1 py-2 px-3 rounded-full text-[13px] font-semibold tracking-tight transition-colors duration-300 ease-[0.16,1,0.3,1] cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-white/20 z-10 ${isActive ? 'text-black' : 'text-[#8E8E93] hover:text-[#AEAEB2]'}`}
+                              >
+                                  {isActive && (
+                                      <motion.div 
+                                          layoutId="activeSubdomainBg"
+                                          className="absolute inset-0 bg-white rounded-full z-[-1] shadow-[0_2px_8px_rgba(255,255,255,0.12)]"
+                                          transition={SPRING_TRANSITION}
+                                      />
+                                  )}
+                                  <span className="relative z-10">{tab.label}</span>
+                              </button>
+                          );
+                      })}
                   </div>
 
-                  {activeSubdomain === 'sports' ? (
-                      <>
-                          <div className="w-full max-w-3xl mb-8">
-                              <GameScheduleMock />
-                          </div>
-                          <HomeFeed />
-                      </>
-                  ) : (
-                      <div className="w-full">
-                          <WorkspaceOrchestrationBlueprint user={user} token={token} onSignIn={onSignIn} />
-                      </div>
-                  )}
+                  {/* Subdomain Content Routing */}
+                  <AnimatePresence mode="wait">
+                      {activeSubdomain === 'sports' ? (
+                          <motion.div 
+                              key="sports"
+                              initial={{ opacity: 0, y: 10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: -10 }}
+                              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+                              className="w-full flex flex-col items-center"
+                          >
+                              <div className="w-full max-w-3xl mb-8">
+                                  <GameScheduleMock />
+                              </div>
+                              <HomeFeed />
+                          </motion.div>
+                      ) : activeSubdomain === 'workspace' ? (
+                          <motion.div 
+                              key="workspace"
+                              initial={{ opacity: 0, y: 10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: -10 }}
+                              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+                              className="w-full"
+                          >
+                              <WorkspaceOrchestrationBlueprint user={user} token={token} onSignIn={onSignIn} />
+                          </motion.div>
+                      ) : (
+                          <motion.div 
+                              key="kalshi"
+                              initial={{ opacity: 0, y: 10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: -10 }}
+                              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+                              className="w-full"
+                          >
+                              <KalshiMcpBlueprint />
+                          </motion.div>
+                      )}
+                  </AnimatePresence>
               </div>
           )}
 
+          {/* ============================================================================ */}
+          {/* CHAT THREAD (Active State) */}
+          {/* ============================================================================ */}
           {messages.length > 0 && (
               <div className="flex flex-col gap-8" aria-live="polite">
                  <AnimatePresence initial={false}>
@@ -662,18 +832,26 @@ function ChatInterface({ user, token, onSignIn, loadingAuth }: ChatInterfaceProp
                              className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
                          >
                              {msg.role === 'user' ? (
-                                 <div className="bg-white/[0.06] border border-white/[0.02] text-white/95 px-5 py-3.5 rounded-[24px] max-w-[85%] rounded-br-[4px] text-[16px] font-normal leading-relaxed tracking-[-0.01em] shadow-sm backdrop-blur-md">
-                                     {msg.content}
+                                 <div className="flex flex-col items-end gap-2.5 max-w-[85%]">
+                                     {msg.image && (
+                                         <div className="overflow-hidden rounded-[20px] border border-white/10 max-h-[220px] max-w-sm shadow-xl bg-[#0A0A0C]">
+                                             <img src={msg.image} alt="Uploaded sports asset" className="object-cover max-h-[220px] w-auto h-auto rounded-[20px]" referrerPolicy="no-referrer" />
+                                         </div>
+                                     )}
+                                     <div className="bg-white/[0.08] border border-white/[0.04] text-white/95 px-5 py-3.5 rounded-[24px] rounded-br-[6px] text-[16px] font-normal leading-relaxed tracking-[-0.01em] shadow-sm backdrop-blur-md">
+                                         {msg.content}
+                                     </div>
                                  </div>
                              ) : (
                                  <div className="w-full flex flex-col items-start max-w-full">
                                      {msg.artifacts?.map(renderArtifact)}
                                      
+                                     {/* Contextual Action Chips */}
                                      {(idx === messages.length - 1 && !loading) && msg.artifacts?.some(a => a.type === 'SPORTS_ARTIFACT') && (
                                          <motion.div 
-                                            initial={{ opacity: 0 }}
-                                            animate={{ opacity: 1 }}
-                                            transition={{ delay: 0.3 }}
+                                            initial={{ opacity: 0, y: 5 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            transition={{ delay: 0.3, duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
                                             className="w-full max-w-full overflow-hidden mt-5 relative select-none"
                                          >
                                             <div className="flex overflow-x-auto gap-2.5 pb-2.5 pt-1 -mx-4 px-4 snap-x hide-scrollbars scroll-smooth w-full">
@@ -683,9 +861,9 @@ function ChatInterface({ user, token, onSignIn, loadingAuth }: ChatInterfaceProp
                                                         type="button"
                                                         whileHover={{ scale: 1.02 }}
                                                         whileTap={{ scale: 0.96 }}
-                                                        transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                                                        transition={SPRING_TRANSITION}
                                                         onClick={() => handleQuery(undefined, q)} 
-                                                        className="snap-start shrink-0 px-5.5 h-11 flex items-center justify-center text-[11px] font-semibold tracking-widest uppercase text-neutral-300 hover:text-white bg-white/[0.03] active:bg-white/[0.08] rounded-full border border-white/[0.06] transition-all duration-200 outline-none focus-visible:ring-2 focus-visible:ring-white/30 whitespace-nowrap cursor-pointer shadow-sm"
+                                                        className="snap-start shrink-0 px-6 h-10 flex items-center justify-center text-[10px] font-bold tracking-widest uppercase text-neutral-400 hover:text-white bg-white/[0.02] active:bg-white/[0.06] rounded-full border border-white/[0.06] transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-white/30 whitespace-nowrap cursor-pointer shadow-sm"
                                                     >
                                                         {q}
                                                     </motion.button>
@@ -706,45 +884,117 @@ function ChatInterface({ user, token, onSignIn, loadingAuth }: ChatInterfaceProp
               <motion.div 
                  initial={{ opacity: 0 }}
                  animate={{ opacity: 1 }}
-                 className="flex items-center justify-center mt-8 mb-4 gap-3 text-neutral-500 text-[10px] font-mono tracking-widest uppercase select-none"
+                 transition={{ duration: 0.4 }}
+                 className="flex items-center justify-center mt-8 mb-4 gap-3 text-neutral-500 text-[10px] font-mono tracking-widest uppercase select-none font-bold"
                  aria-live="polite"
                  aria-busy="true"
               >
-                 <span className="flex gap-1.5">
-                    <span className="w-1.5 h-1.5 bg-neutral-600 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                    <span className="w-1.5 h-1.5 bg-neutral-600 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                    <span className="w-1.5 h-1.5 bg-neutral-600 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                 <span className="flex items-center gap-1.5 opacity-80">
+                    <motion.span 
+                        animate={{ opacity: [0.3, 1, 0.3] }} 
+                        transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut", delay: 0 }}
+                        className="w-2 h-2 bg-white rounded-full" 
+                    />
+                    <motion.span 
+                        animate={{ opacity: [0.3, 1, 0.3] }} 
+                        transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut", delay: 0.3 }}
+                        className="w-2 h-2 bg-[#9B72CB] rounded-full" 
+                    />
+                    <motion.span 
+                        animate={{ opacity: [0.3, 1, 0.3] }} 
+                        transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut", delay: 0.6 }}
+                        className="w-2 h-2 bg-[#D96570] rounded-full" 
+                    />
                  </span>
-                 <span>Synthesizing</span>
+                 <span className="ml-1 tracking-widest">Synthesizing</span>
               </motion.div>
           )}
       </main>
 
-      {/* Input Form with iOS Safe Area padding */}
-      <div className="fixed bottom-0 w-full p-4 sm:p-6 pb-[calc(env(safe-area-inset-bottom,24px)+16px)] sm:pb-10 bg-gradient-to-t from-[#000000] via-[#000000]/95 to-transparent pointer-events-none z-50">
-         <form onSubmit={handleQuery} className="max-w-xl mx-auto relative flex items-center bg-[#151517]/80 backdrop-blur-[40px] rounded-[32px] border border-white/[0.06] shadow-[0_-12px_40px_rgba(0,0,0,0.8)] overflow-hidden transition-all duration-500 focus-within:border-white/[0.15] focus-within:bg-[#1a1a1c]/90 focus-within:shadow-[0_-20px_60px_rgba(0,0,0,0.9)] pointer-events-auto supports-[backdrop-filter]:bg-[#151517]/60 transform-gpu">
-            <label htmlFor="chat-input" className="sr-only">Query analysis or data</label>
-            <div className="pl-6 pr-2 text-neutral-500" aria-hidden="true">
-                <Search className="h-[18px] w-[18px]" strokeWidth={2} />
-            </div>
-            <input
-              id="chat-input"
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="Query analysis or data..."
-              className="flex-1 bg-transparent border-none outline-none py-4 text-[16px] text-white/95 placeholder:text-neutral-500 font-normal tracking-[-0.01em] disabled:opacity-50 disabled:cursor-not-allowed appearance-none animate-none"
-              disabled={loading}
-              autoComplete="off"
-            />
-            <div className="pr-2 pl-1">
-                <button 
-                  disabled={loading || !prompt.trim()}
-                  type="submit" 
-                  className={`bg-white text-black p-2.5 w-10 h-10 rounded-full transition-all duration-300 ease-[0.16,1,0.3,1] flex items-center justify-center cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 shadow-[0_2px_8px_rgba(255,255,255,0.1)] ${loading ? 'opacity-50 scale-95 animate-pulse' : 'hover:bg-neutral-200 active:scale-[0.92] disabled:opacity-0 disabled:scale-75'}`}
-                  aria-label="Submit Query"
-                >
-                    <Send className="h-[16px] w-[16px] translate-x-[-0.5px] translate-y-[-0.5px]" strokeWidth={2.5} />
-                </button>
+      {/* Cinematic Glassmorphic Input Bar */}
+      <div className="fixed bottom-0 w-full p-4 sm:p-6 pb-[calc(env(safe-area-inset-bottom,24px)+16px)] sm:pb-10 bg-gradient-to-t from-[#000000] via-[#000000]/95 to-transparent pointer-events-none z-50 transform-gpu">
+         <form 
+             onSubmit={handleQuery} 
+             onDragOver={handleDragOver}
+             onDragLeave={handleDragLeave}
+             onDrop={handleDrop}
+             className={`max-w-2xl mx-auto relative flex flex-col bg-[#0A0A0C]/80 backdrop-blur-[40px] saturate-[180%] rounded-[28px] border border-white/[0.08] shadow-[0_-12px_40px_rgba(0,0,0,0.5),inset_0_1px_2px_rgba(255,255,255,0.05)] overflow-hidden transition-all duration-500 ease-[0.16,1,0.3,1] focus-within:border-white/[0.2] focus-within:bg-[#121214]/90 focus-within:shadow-[0_0_80px_-20px_rgba(255,255,255,0.08)] pointer-events-auto supports-[backdrop-filter]:bg-[#0A0A0C]/60 group ${isDragging ? 'border-white/20 bg-[#121214]/95 shadow-[0_0_80px_-20px_rgba(255,255,255,0.1)]' : ''}`}
+         >
+            {/* Drag and Drop Overlay Indicator */}
+            {isDragging && (
+                <div className="absolute inset-0 bg-white/5 backdrop-blur-[2px] flex items-center justify-center text-[11px] font-mono tracking-widest uppercase text-white font-bold z-40 animate-pulse pointer-events-none">
+                    Drop Image Here
+                </div>
+            )}
+
+            {/* Image Attachment Preview Layer */}
+            {imagePreviewUrl && (
+                <div className="flex items-center gap-3 px-6 pt-4 pb-2 border-b border-white/[0.04] relative z-10 select-none">
+                    <div className="relative w-16 h-16 rounded-[12px] overflow-hidden border border-white/10 shadow-md">
+                        <img src={imagePreviewUrl} alt="Attachment Preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                        <button 
+                            type="button" 
+                            onClick={clearAttachment}
+                            className="absolute top-1 right-1 bg-black/60 hover:bg-black/90 text-white rounded-full p-0.5 opacity-100 transition-all duration-200 outline-none"
+                            aria-label="Remove image"
+                        >
+                            <X className="h-3 w-3" />
+                        </button>
+                    </div>
+                    <div className="flex flex-col text-left">
+                        <span className="text-white text-[12px] font-medium leading-none">Sports Asset Attached</span>
+                        <span className="text-neutral-500 text-[10px] font-mono mt-1 uppercase">Ready to Analyze</span>
+                    </div>
+                </div>
+            )}
+
+            {/* Input Controls Row */}
+            <div className="flex items-center w-full relative z-10">
+                <label htmlFor="chat-input" className="sr-only">Query analysis or data</label>
+                <div className="pl-6 pr-2 text-neutral-500 group-focus-within:text-neutral-400 transition-colors duration-300 relative z-10" aria-hidden="true">
+                    <Search className="h-[18px] w-[18px]" strokeWidth={2} />
+                </div>
+                
+                <input
+                  id="chat-input"
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder={imagePreviewUrl ? "Ask about this image..." : "Ask Aura about games, schedules, or statistics..."}
+                  className="flex-1 bg-transparent border-none outline-none py-4 text-[16px] text-white/95 placeholder:text-neutral-500 font-sans font-normal tracking-[-0.01em] disabled:opacity-50 disabled:cursor-not-allowed appearance-none animate-none relative z-10"
+                  disabled={loading}
+                  autoComplete="off"
+                />
+
+                {/* Premium Camera Button */}
+                <div className="px-1 flex items-center relative z-10">
+                    <input 
+                        id="image-upload-input"
+                        type="file"
+                        accept="image/*"
+                        onChange={handleFileChange}
+                        className="hidden"
+                    />
+                    <button
+                        type="button"
+                        onClick={() => document.getElementById('image-upload-input')?.click()}
+                        className={`p-2 rounded-full text-neutral-400 hover:text-white hover:bg-white/[0.04] active:bg-white/[0.08] transition-all duration-300 ${(selectedImage || loading) ? 'opacity-50 pointer-events-none' : 'cursor-pointer'}`}
+                        title="Upload matching image (scorecards, slips, players, stats)"
+                        aria-label="Upload Sports Image"
+                    >
+                        <Camera className="h-[18px] w-[18px]" strokeWidth={2} />
+                    </button>
+                </div>
+                
+                <div className="pr-2 pl-1 relative z-10">
+                    <button 
+                      disabled={loading || (!prompt.trim() && !selectedImage)}
+                      type="submit" 
+                      className={`bg-white text-black p-2.5 w-10 h-10 rounded-full transition-all duration-500 ease-[0.16,1,0.3,1] flex items-center justify-center cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 shadow-[0_2px_8px_rgba(255,255,255,0.15)] ${loading ? 'opacity-50 scale-95 animate-pulse' : 'hover:scale-[1.05] active:scale-[0.92] disabled:opacity-0 disabled:scale-75'}`}
+                      aria-label="Submit Query"
+                    >
+                        <Send className="h-[16px] w-[16px] translate-x-[-0.5px] translate-y-[-0.5px]" strokeWidth={2.5} />
+                    </button>
+                </div>
             </div>
          </form>
       </div>
@@ -760,7 +1010,6 @@ function CanonicalEntityPage() {
     const { feed, loading } = useFeedData();
     const story = useMemo(() => feed.find(c => c.id === id || c.slug === id), [feed, id]);
 
-    // Format defensive dates
     const validDate = useMemo(() => {
         if (!story?.publishedAt) return '';
         const d = new Date(story.publishedAt);
@@ -768,40 +1017,40 @@ function CanonicalEntityPage() {
     }, [story?.publishedAt]);
 
     if (loading) return <div className="p-16 text-center text-neutral-500 text-[11px] font-mono tracking-widest uppercase animate-pulse select-none mt-20">Resolving Context...</div>;
-    if (!story) return <div className="p-16 text-center text-neutral-500 text-[14px] mt-20">Context not found or expired.</div>;
+    if (!story) return <div className="p-16 text-center text-neutral-500 text-[14px] mt-20 font-sans">Context not found or expired.</div>;
 
     return (
         <article className="max-w-3xl mx-auto w-full p-6 sm:p-8 animate-in fade-in slide-in-from-bottom-8 duration-700 ease-[0.16,1,0.3,1] pt-10 pb-40 text-left">
             <SEO title={`${story.headline} | Aura`} canonicalPath={`/story/${story.slug || story.id}`} />
             
-            <Link to="/" className="inline-flex items-center gap-2 text-neutral-500 hover:text-white transition-all duration-300 ease-[0.16,1,0.3,1] active:scale-[0.98] mb-10 text-[11px] font-mono uppercase tracking-widest rounded-[4px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20 px-1 py-0.5 -ml-1">
+            <Link to="/" className="inline-flex items-center gap-2 text-neutral-500 hover:text-white transition-all duration-300 ease-[0.16,1,0.3,1] active:scale-[0.96] mb-10 text-[10px] font-mono uppercase tracking-widest rounded-[4px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20 px-1 py-0.5 -ml-1">
                <ArrowLeft className="h-4 w-4" strokeWidth={1.5} /> Return to Feed
             </Link>
 
             <header className="flex flex-wrap gap-3 items-center mb-6 select-none font-sans">
                  {story.priority === 'high_live' && (
-                    <div className="inline-flex items-center gap-1.5 bg-[#FF3B30]/10 px-2 py-0.5 rounded-[4px] border border-[#FF3B30]/20 font-sans">
-                       <span className="h-1.5 w-1.5 rounded-full bg-[#FF3B30] animate-pulse" />
-                       <span className="text-[10px] font-bold text-[#FF3B30] uppercase tracking-widest font-sans">Live</span>
+                    <div className="inline-flex items-center gap-1.5 bg-white/[0.05] px-2 py-0.5 rounded-[4px] border border-white/10 font-sans">
+                       <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
+                       <span className="text-[10px] font-bold text-white uppercase tracking-widest font-sans">Live</span>
                     </div>
                  )}
-                <span className="text-[10px] font-medium text-neutral-400 uppercase tracking-widest">{story.category || 'Intelligence'}</span>
+                <span className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest font-bold">{story.category || 'Intelligence'}</span>
                 {validDate && (
                     <>
                         <span className="text-neutral-700 mx-1">•</span>
-                        <time dateTime={new Date(story.publishedAt).toISOString()} className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest tabular-nums">
+                        <time dateTime={new Date(story.publishedAt).toISOString()} className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest tabular-nums lining-nums">
                             {validDate}
                         </time>
                     </>
                 )}
             </header>
 
-            <h1 className="text-[32px] sm:text-[40px] font-medium tracking-[-0.02em] text-white/95 leading-[1.15] mb-8">
+            <h1 className="text-[32px] sm:text-[40px] font-medium tracking-[-0.03em] text-white/95 leading-[1.1] mb-8">
                 {story.headline}
             </h1>
 
             {story.image_url && (
-                <figure className="w-full aspect-[21/9] sm:aspect-[16/9] rounded-[24px] overflow-hidden mb-12 bg-white/[0.02] border border-white/[0.04] relative">
+                <figure className="w-full aspect-[21/9] sm:aspect-[16/9] rounded-[24px] overflow-hidden mb-12 bg-[#0A0A0C] border border-white/[0.04] relative shadow-[0_8px_30px_rgba(0,0,0,0.12)]">
                     <SafeImage 
                         src={story.image_url} 
                         alt={story.headline} 
@@ -811,34 +1060,34 @@ function CanonicalEntityPage() {
                 </figure>
             )}
 
-            <div className="max-w-[640px] mx-auto text-white/80 text-[17px] sm:text-[19px] font-serif font-normal leading-[1.8] space-y-7">
+            <div className="max-w-[640px] mx-auto text-white/85 text-[17px] sm:text-[19px] font-serif font-normal leading-[1.7] space-y-7">
                 {story.type === 'PREDICTION_MARKET' ? (
-                    <div className="bg-white/[0.02] rounded-[24px] p-8 sm:p-10 my-8 text-center border border-white/[0.04] backdrop-blur-md">
-                        <div className="inline-flex items-center gap-2 text-[#34C759] text-[10px] font-medium uppercase tracking-widest mb-8 select-none font-sans">
-                            <span className="w-1.5 h-1.5 bg-[#34C759] rounded-full animate-pulse shadow-[0_0_8px_rgba(52,199,89,0.8)]" />
+                    <div className="bg-[#050505] rounded-[24px] p-8 sm:p-10 my-8 text-center border border-white/[0.04] backdrop-blur-md shadow-inner">
+                        <div className="inline-flex items-center gap-2 text-neutral-400 text-[10px] font-bold uppercase tracking-widest mb-8 select-none font-sans">
+                            <Activity className="w-3 h-3 text-neutral-400" />
                             Live Kalshi Market
                         </div>
-                        <h2 className="text-[24px] font-sans font-medium text-white/95 leading-tight mb-10 tracking-tight">
+                        <h2 className="text-[26px] font-sans font-medium text-white/95 leading-[1.2] mb-10 tracking-tight">
                             {story.headline}
                         </h2>
                         <div className="flex justify-center items-center gap-12 mb-10 select-none font-sans">
                             <div className="text-center">
-                                <div className="text-[10px] text-neutral-500 font-medium uppercase tracking-widest mb-3">Implied Yes</div>
+                                <div className="text-[10px] text-neutral-500 font-mono uppercase tracking-widest mb-3">Implied Yes</div>
                                 <div className="text-[48px] font-sans font-medium text-white/95 tabular-nums lining-nums leading-none tracking-tighter">
-                                    {story.metadata?.yes_price || 50}<span className="text-[24px] text-neutral-600 font-normal">%</span>
+                                    {story.metadata?.yes_price || 50}<span className="text-[24px] text-neutral-600 font-normal ml-1">%</span>
                                 </div>
                             </div>
                             <div className="w-[1px] h-20 bg-white/[0.04]" />
                             <div className="text-center">
-                                <div className="text-[10px] text-neutral-500 font-medium uppercase tracking-widest mb-3">Implied No</div>
+                                <div className="text-[10px] text-neutral-500 font-mono uppercase tracking-widest mb-3">Implied No</div>
                                 <div className="text-[48px] font-sans font-medium text-neutral-400 tabular-nums lining-nums leading-none tracking-tighter">
-                                    {story.metadata?.no_price || 100 - (story.metadata?.yes_price || 50)}<span className="text-[24px] text-neutral-600 font-normal">%</span>
+                                    {story.metadata?.no_price || 100 - (story.metadata?.yes_price || 50)}<span className="text-[24px] text-neutral-600 font-normal ml-1">%</span>
                                 </div>
                             </div>
                         </div>
                         <div className="flex justify-center gap-4 font-sans">
-                            <button className="bg-white/10 hover:bg-white/20 text-white border border-white/10 min-w-[160px] text-[15px] font-medium py-3.5 rounded-full transition-all duration-300 ease-[0.16,1,0.3,1] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50">Execute Yes</button>
-                            <button className="bg-transparent hover:bg-white/[0.04] text-neutral-300 border border-white/[0.08] min-w-[160px] text-[15px] font-medium py-3.5 rounded-full transition-all duration-300 ease-[0.16,1,0.3,1] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50">Execute No</button>
+                            <button className="bg-white/10 hover:bg-white/20 text-white border border-white/10 min-w-[160px] text-[13px] font-mono font-bold uppercase tracking-widest py-3.5 rounded-full transition-all duration-300 ease-[0.16,1,0.3,1] active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 cursor-pointer">Execute Yes</button>
+                            <button className="bg-transparent hover:bg-white/[0.04] text-neutral-300 border border-white/[0.08] min-w-[160px] text-[13px] font-mono font-bold uppercase tracking-widest py-3.5 rounded-full transition-all duration-300 ease-[0.16,1,0.3,1] active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 cursor-pointer">Execute No</button>
                         </div>
                     </div>
                 ) : (
@@ -847,7 +1096,7 @@ function CanonicalEntityPage() {
                             remarkPlugins={CHAT_REMARK_PLUGINS}
                             components={{
                                 ...CHAT_MARKDOWN_COMPONENTS,
-                                p: ({node, ...props}) => <p className="mb-6 last:mb-0 text-neutral-300 font-serif" {...props} />,
+                                p: ({node, ...props}) => <p className="mb-6 last:mb-0 text-white/85 font-serif" {...props} />,
                             }}
                         >
                             {story.editorial_copy || story.ai_analysis || story.summary}
@@ -856,15 +1105,15 @@ function CanonicalEntityPage() {
                 )}
                  
                  {(story.betting_angle || story.metadata?.kalshi_market_injected) && (
-                     <aside className="bg-white/[0.02] rounded-[24px] p-6 sm:p-8 my-12 relative border border-white/[0.04] font-sans">
+                     <aside className="bg-[#050505] rounded-[24px] p-6 sm:p-8 my-12 relative border border-white/[0.04] font-sans shadow-sm">
                         <div className="flex items-center gap-3 mb-6 select-none animate-none">
                             {story.metadata?.kalshi_market_injected ? (
-                                <span className="text-[#34C759] text-[10px] font-medium uppercase tracking-widest flex items-center gap-2">
-                                    <span className="w-1.5 h-1.5 bg-[#34C759] rounded-full animate-pulse shadow-[0_0_8px_rgba(52,199,89,0.8)]" />
+                                <span className="text-neutral-400 text-[10px] font-bold uppercase tracking-widest flex items-center gap-2">
+                                    <Activity className="w-3.5 h-3.5" />
                                     Order Book Read
                                 </span>
                             ) : (
-                                <span className="text-neutral-400 text-[10px] font-medium uppercase tracking-widest flex items-center gap-2">
+                                <span className="text-neutral-400 text-[10px] font-bold uppercase tracking-widest flex items-center gap-2">
                                     Identified Value
                                 </span>
                             )}
@@ -877,9 +1126,9 @@ function CanonicalEntityPage() {
                                         {story.metadata.kalshi_title}
                                     </h3>
                                 </div>
-                                <div className="flex items-center gap-6 bg-[#0a0a0a]/40 rounded-[16px] p-5 border border-white/[0.04] select-none">
+                                <div className="flex items-center gap-6 bg-[#0A0A0A] rounded-[16px] p-5 border border-white/[0.04] select-none">
                                     <div className="flex-1 w-full flex flex-col">
-                                        <div className="flex justify-between text-[11px] font-mono text-neutral-400 mb-3 tabular-nums lining-nums uppercase tracking-widest">
+                                        <div className="flex justify-between text-[11px] font-mono text-neutral-400 mb-3 tabular-nums lining-nums uppercase tracking-widest font-bold">
                                             <span className="text-[#34C759]">Yes {story.metadata.kalshi_yes_price}%</span>
                                             <span className="text-neutral-600">No {100 - (story.metadata.kalshi_yes_price || 0)}%</span>
                                         </div>
@@ -907,16 +1156,16 @@ function CanonicalEntityPage() {
 
                  {story.factual_claims && story.factual_claims.length > 0 && (
                      <footer className="text-[10px] font-mono text-neutral-600 pt-8 mt-12 border-t border-white/[0.04] uppercase tracking-widest leading-relaxed select-none">
-                         <span className="text-neutral-500">Cross-referenced via: </span> {Array.from(new Set(story.factual_claims.map((c: any) => c.source_entity))).join(', ')}
+                         <span className="text-neutral-500 font-bold">Cross-referenced via: </span> {Array.from(new Set(story.factual_claims.map((c: any) => c.source_entity))).join(', ')}
                      </footer>
                  )}
             </div>
 
             <footer className="mt-16 pt-8 border-t border-white/[0.04] flex items-center justify-between max-w-[640px] mx-auto select-none">
                 <div className="flex items-center gap-4">
-                    <div className="h-10 w-10 rounded-[10px] bg-white/[0.02] border border-white/[0.05] flex items-center justify-center text-neutral-500 font-mono text-[14px]">A</div>
+                    <div className="h-10 w-10 rounded-[10px] bg-[#050505] border border-white/[0.05] flex items-center justify-center text-neutral-500 font-mono text-[14px]">A</div>
                     <div>
-                        <div className="text-[12px] font-medium text-neutral-300 tracking-wide">Aura Intelligence</div>
+                        <div className="text-[12px] font-medium text-neutral-300 tracking-wide">Aura Sports</div>
                         <div className="text-[10px] text-neutral-600 font-mono mt-1 uppercase tracking-widest">
                             Verified Context
                         </div>
@@ -927,9 +1176,6 @@ function CanonicalEntityPage() {
     );
 }
 
-// ============================================================================
-// Stubs for remaining routes
-// ============================================================================
 function CategoryHubPage() {
     const { category } = useParams<{ category: string }>();
     const { feed, loading } = useFeedData();
@@ -943,7 +1189,7 @@ function CategoryHubPage() {
 
     return (
         <div className="max-w-3xl mx-auto w-full p-6 sm:p-8 animate-in fade-in slide-in-from-bottom-4 duration-700 ease-[0.16,1,0.3,1] pt-10 pb-40 text-left">
-           <Link to="/" className="inline-flex items-center gap-2 text-neutral-500 hover:text-white transition-all duration-300 ease-[0.16,1,0.3,1] active:scale-[0.98] mb-10 text-[11px] font-mono uppercase tracking-widest rounded-[4px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20 px-1 py-0.5 -ml-1">
+           <Link to="/" className="inline-flex items-center gap-2 text-neutral-500 hover:text-white transition-all duration-300 ease-[0.16,1,0.3,1] active:scale-[0.98] mb-10 text-[10px] font-mono uppercase tracking-widest rounded-[4px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20 px-1 py-0.5 -ml-1">
                <ArrowLeft className="h-4 w-4" strokeWidth={1.5} /> Dashboard
            </Link>
            <h1 className="text-[26px] font-medium tracking-tight mb-10 text-white/95">Latest in {displayCategory}</h1>
@@ -959,7 +1205,7 @@ function CategoryHubPage() {
            ) : (
                <div className="space-y-6">
                    {filteredFeed.map(story => (
-                       <Link key={story.id} to={`/story/${story.slug || story.id}`} className="block border border-white/[0.04] bg-white/[0.01] p-6 sm:p-8 rounded-[24px] hover:bg-white/[0.03] transition-all duration-500 ease-[0.16,1,0.3,1] active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 font-sans">
+                       <Link key={story.id} to={`/story/${story.slug || story.id}`} className="block border border-white/[0.04] bg-[#050505] p-6 sm:p-8 rounded-[24px] hover:bg-[#0c0c0e] transition-all duration-500 ease-[0.16,1,0.3,1] active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 font-sans cursor-pointer">
                            <h2 className="text-[18px] font-medium text-neutral-100 mb-3 tracking-tight">{story.headline}</h2>
                            <p className="text-[14px] text-neutral-400 line-clamp-2 leading-[1.65]">{story.summary}</p>
                            <time dateTime={new Date(story.publishedAt).toISOString()} className="mt-6 block text-[10px] font-mono text-neutral-500 uppercase tracking-widest tabular-nums lining-nums">
@@ -978,11 +1224,11 @@ function TeamCanonicalPage() {
     return (
         <div className="max-w-3xl mx-auto w-full p-6 sm:p-8 pt-10 animate-in fade-in text-left">
             <SEO title={`${(slug || '').toUpperCase()} | Team Data`} canonicalPath={`/team/${slug}`} />
-            <Link to="/" className="inline-flex items-center gap-2 text-neutral-500 hover:text-white transition-all duration-300 ease-[0.16,1,0.3,1] active:scale-[0.98] mb-8 text-[11px] font-mono uppercase tracking-widest rounded-[4px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20 px-1 py-0.5 -ml-1">
+            <Link to="/" className="inline-flex items-center gap-2 text-neutral-500 hover:text-white transition-all duration-300 ease-[0.16,1,0.3,1] active:scale-[0.98] mb-8 text-[10px] font-mono uppercase tracking-widest rounded-[4px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20 px-1 py-0.5 -ml-1">
                <ArrowLeft className="h-4 w-4" strokeWidth={1.5} /> Dashboard
             </Link>
             <h1 className="text-[28px] font-medium text-white/95 mb-8 capitalize tracking-tight">{slug?.replace(/-/g, ' ')}</h1>
-            <div className="bg-white/[0.015] border border-white/[0.04] p-10 rounded-[24px] text-neutral-500 text-center text-[11px] font-mono uppercase tracking-widest border-dashed select-none">Team context synchronization pending...</div>
+            <div className="bg-[#050505] border border-white/[0.04] p-10 rounded-[24px] text-neutral-500 text-center text-[10px] font-mono uppercase tracking-widest border-dashed select-none">Team context synchronization pending...</div>
         </div>
     );
 }
@@ -1042,7 +1288,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <ScrollToTop />
-      <div className="min-h-screen bg-[#000000] text-neutral-200 flex flex-col font-sans selection:bg-white/15 selection:text-white">
+      <div className="min-h-screen bg-[#000000] text-neutral-200 flex flex-col font-sans selection:bg-white/20 selection:text-white">
           <Navigation user={user} loadingAuth={loadingAuth} onSignIn={handleSignIn} onSignOut={handleSignOut} />
           <Routes>
               <Route path="/" element={<ChatInterface user={user} token={token} onSignIn={handleSignIn} loadingAuth={loadingAuth} />} />

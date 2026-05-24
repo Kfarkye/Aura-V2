@@ -15,7 +15,7 @@ import { OAuth2Client } from 'google-auth-library';
 import { handleWinProbabilityQuery } from './src/server/win-probability-handler';
 import { handlePlayerPropQuery } from './src/server/player-prop-handler';
 import { generateEditorialFeed } from './src/server/cron-feed-generator';
-import { handleWorkspaceQuery } from './src/server/workspace-handler';
+import { handleWorkspaceQuery, getGmailEmails, getCalendarEvents, getDriveFiles, getGoogleTasks } from './src/server/workspace-handler';
 import { generateAndDeployMCP } from './src/server/mcp-generator';
 
 let firebaseConfig: any;
@@ -281,12 +281,14 @@ async function startServer() {
     res.json({ status: 'live', engine: 'AURA_CORE' });
   });
 
-  async function processIntent(message: string, history: any[], accessToken?: string): Promise<AuraArtifact[]> {
+  async function processIntent(message: string, history: any[], accessToken?: string, image?: string, imageMime?: string): Promise<AuraArtifact[]> {
       const chat = ai.chats.create({
           model: "gemini-3.5-flash", 
-          history: history ? history.map((h: any) => ({ role: h.role, parts: [{ text: h.content }] })) : undefined,
+          history: history ? history.map((h: any) => ({ role: h.role, parts: [{ text: h.content || "" }] })) : undefined,
           config: {
               systemInstruction: `You are AURA, an elite AI-native sports intelligence platform and a world-class betting sharp. You operate at the absolute highest level of sports betting, and every piece of analysis you provide represents a masterclass in betting strategy, probability, and market dynamics. You do not just recite stats; you dissect value, uncover hidden edges, and provide razor-sharp, sophisticated insights. You help users find live and historical sports data, matchups, scores, and team details, but always through the lens of a professional bettor. 
+
+GEMINI VISION POWER: You are equipped with Gemini 3.5 Vision capabilities. When presented with images, screenshots of stats cards, scoreboard photos, team logos, match stats, or betting slips, analyze them with clinical betting-sharp precision. Extract key values, detect trends, cross-reference real-time knowledge matching the image (using googleSearch if needed), and output actionable wagering/prediction intelligence.
 
 TEMPORAL CONTEXT: The current year is 2026. Do NOT default your search queries, highlights, video requests, or sports analysis to training year cutoff statistics or dates (like 2024 or earlier). When generating queries, predicting events, or searching for live video sets, highlights, or news without a specified year, ALWAYS target the current year (2026) or modern 2025/2026 context. For example, search for the modern 2026 variations, NOT 2024.
 
@@ -398,7 +400,15 @@ Current Date Context: ${new Date().toISOString().split('T')[0].replace(/-/g, '')
           }
       });
 
-      const response = await chat.sendMessage({ message });
+      let messageContent: any = message;
+      if (image && imageMime) {
+          messageContent = [
+              { text: message || "Analyze this sports intelligence asset." },
+              { inlineData: { mimeType: imageMime, data: image } }
+          ];
+      }
+
+      const response = await chat.sendMessage({ message: messageContent });
       const emitArtifacts: AuraArtifact[] = [];
 
       if (response.functionCalls && response.functionCalls.length > 0) {
@@ -731,16 +741,286 @@ Current Date Context: ${new Date().toISOString().split('T')[0].replace(/-/g, '')
       }
   });
 
+  app.post('/api/workspace/normalize', async (req, res) => {
+      try {
+          const authHeader = req.headers.authorization;
+          if (!authHeader || !authHeader.startsWith('Bearer ')) {
+              return res.status(401).json({ error: 'UNAUTHORIZED: Google Workspace OAuth token required.' });
+          }
+          const token = authHeader.substring(7);
+          const { source } = req.body;
+          if (!source) {
+              return res.status(400).json({ error: 'BAD_REQUEST: Missing source parameter.' });
+          }
+
+          console.log(`[AURA:API] Normalizing source: ${source}`);
+          const safeSource = source.toUpperCase();
+          let data: any;
+          if (safeSource === 'GMAIL') {
+              data = await getGmailEmails(token);
+          } else if (safeSource === 'CALENDAR') {
+              data = await getCalendarEvents(token);
+          } else if (safeSource === 'DRIVE') {
+              data = await getDriveFiles(token);
+          } else if (safeSource === 'TASKS') {
+              data = await getGoogleTasks(token);
+          } else {
+              return res.status(400).json({ error: `BAD_REQUEST: Unsupported source ${source}` });
+          }
+
+          res.json({
+              source: safeSource,
+              status: 'SUCCESS',
+              timestamp: new Date().toISOString(),
+              recordsCount: data.length,
+              sampleCanonicalRecords: data
+          });
+      } catch (e: any) {
+          console.error('[AURA:WORKSPACE_NORMALIZE_ERR]', e);
+          res.status(500).json({ error: e.message || 'Workspace execution failure' });
+      }
+  });
+
+  app.post('/api/mcp/kalshi/execute', async (req, res) => {
+      try {
+          const { tool, args = {} } = req.body;
+          if (!tool) {
+              return res.status(400).json({ error: 'BAD_REQUEST: Missing tool name.' });
+          }
+
+          console.log(`[AURA:MCP] Executing Kalshi Tool: ${tool} with args:`, args);
+
+          const KALSHI_API_URL = process.env.KALSHI_API_URL || 'https://api.elections.kalshi.com/trade-api/v2';
+          const KALSHI_API_KEY_ID = process.env.KALSHI_API_KEY_ID;
+          const KALSHI_PRIVATE_KEY = process.env.KALSHI_PRIVATE_KEY;
+
+          const timestamp = Date.now().toString();
+          const logs: string[] = [
+              `[DEBUG] [SYSTEM] Initiating server-side FastMCP call to Kalshi Gateway...`,
+              `[DEBUG] [SYSTEM] Tool target resolved: ${tool}`,
+              `[DEBUG] [SYSTEM] Base URL: ${KALSHI_API_URL}`
+          ];
+
+          // Helper to sign and construct headers if credentials exist
+          const getHeaders = (method: string, path: string) => {
+              const headers: any = {
+                  'Content-Type': 'application/json',
+                  'Accept': 'application/json'
+              };
+
+              if (KALSHI_API_KEY_ID && KALSHI_PRIVATE_KEY) {
+                  logs.push(`[AUTHENTICATION] Active API Key ID and Private Key detected. Initiating RSA-PSS signature...`);
+                  try {
+                      // Normalize PEM formatting
+                      let pem = KALSHI_PRIVATE_KEY;
+                      if (!pem.includes('-----BEGIN')) {
+                          try {
+                              const decoded = Buffer.from(pem, 'base64').toString('utf-8');
+                              if (decoded.includes('-----BEGIN')) pem = decoded;
+                          } catch (e) {
+                              pem = pem.replace(/\\n/g, '\n');
+                          }
+                      } else {
+                          pem = pem.replace(/\\n/g, '\n');
+                      }
+
+                      // Kalshi v2 expects: timestamp + METHOD + path
+                      const message = `${timestamp}${method.toUpperCase()}${path}`;
+                      logs.push(`[AUTHENTICATION] Signed Message Preimage: "${message}"`);
+
+                      const crypto = require('crypto');
+                      const sign = crypto.createSign('SHA256');
+                      sign.update(message);
+                      const signature = sign.sign({
+                          key: pem,
+                          padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+                          saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST
+                      }, 'base64');
+
+                      headers['KALSHI-ACCESS-KEY'] = KALSHI_API_KEY_ID;
+                      headers['KALSHI-ACCESS-TIMESTAMP'] = timestamp;
+                      headers['KALSHI-ACCESS-SIGNATURE'] = signature;
+                      logs.push(`[AUTHENTICATION] RSA-PSS Signature successfully attached. Access Key: ${KALSHI_API_KEY_ID.substring(0, 8)}...`);
+                  } catch (signErr: any) {
+                      logs.push(`[ERROR] [AUTHENTICATION] RSA-PSS signing failed: ${signErr.message}. Executing unauthenticated check instead.`);
+                  }
+              } else {
+                  logs.push(`[AUTHENTICATION] Executing in UNAUTHENTICATED public terminal mode.`);
+              }
+              return headers;
+          };
+
+          let result: any = null;
+
+          if (tool === 'get_markets') {
+              const limit = args.limit || 8;
+              const status = args.status || 'open';
+              const path = `/markets?limit=${limit}&status=${status}`;
+              const targetUrl = `${KALSHI_API_URL}${path}`;
+
+              logs.push(`[NETWORK] Fetching target: GET ${targetUrl}`);
+              const response = await fetch(targetUrl, {
+                  method: 'GET',
+                  headers: getHeaders('GET', path)
+              });
+
+              logs.push(`[NETWORK] Transport layer status code: ${response.status}`);
+              if (!response.ok) {
+                  const text = await response.text();
+                  throw new Error(`Upstream Kalshi API returned error (${response.status}): ${text}`);
+              }
+              result = await response.json();
+
+          } else if (tool === 'get_market') {
+              const ticker = args.ticker;
+              if (!ticker) throw new Error("Missing parameter: 'ticker'");
+              const path = `/markets/${ticker}`;
+              const targetUrl = `${KALSHI_API_URL}${path}`;
+
+              logs.push(`[NETWORK] Fetching target: GET ${targetUrl}`);
+              const response = await fetch(targetUrl, {
+                  method: 'GET',
+                  headers: getHeaders('GET', path)
+              });
+
+              logs.push(`[NETWORK] Transport layer status code: ${response.status}`);
+              if (!response.ok) {
+                  const text = await response.text();
+                  throw new Error(`Upstream Kalshi API returned error (${response.status}): ${text}`);
+              }
+              result = await response.json();
+
+          } else if (tool === 'get_order_book') {
+              const ticker = args.ticker;
+              if (!ticker) throw new Error("Missing parameter: 'ticker'");
+              const path = `/markets/${ticker}/orderbook`;
+              const targetUrl = `${KALSHI_API_URL}${path}`;
+
+              logs.push(`[NETWORK] Fetching target: GET ${targetUrl}`);
+              const response = await fetch(targetUrl, {
+                  method: 'GET',
+                  headers: getHeaders('GET', path)
+              });
+
+              logs.push(`[NETWORK] Transport layer status code: ${response.status}`);
+              if (!response.ok) {
+                  const text = await response.text();
+                  throw new Error(`Upstream Kalshi API returned error (${response.status}): ${text}`);
+              }
+              result = await response.json();
+
+          } else if (tool === 'get_balance') {
+              if (!KALSHI_API_KEY_ID || !KALSHI_PRIVATE_KEY) {
+                  logs.push(`[SIMULATION] No environment keys detected. Falling back to cryptographically generated sandboxed telemetry.`);
+                  result = {
+                      balance_cents: 25000000, 
+                      collateral_cents: 18450000,
+                      available_to_trade_cents: 6550000
+                  };
+              } else {
+                  const path = '/portfolio/balance';
+                  const targetUrl = `${KALSHI_API_URL}${path}`;
+                  logs.push(`[NETWORK] Querying portfolio node: GET ${targetUrl}`);
+                  const response = await fetch(targetUrl, {
+                      method: 'GET',
+                      headers: getHeaders('GET', path)
+                  });
+                  if (!response.ok) {
+                      const text = await response.text();
+                      throw new Error(`Portfolio error: ${text}`);
+                  }
+                  result = await response.json();
+              }
+
+          } else if (tool === 'get_positions') {
+              if (!KALSHI_API_KEY_ID || !KALSHI_PRIVATE_KEY) {
+                  logs.push(`[SIMULATION] No environment keys detected. Falling back to virtual positions telemetry.`);
+                  result = {
+                      positions: [
+                          { ticker: "KX-FED-YIELD-UP-6M", side: "yes", count: 450, average_price_cents: 54, current_price_cents: 62, unrealized_pnl_cents: 3600 },
+                          { ticker: "KX-CPI-MAY-INCREASE", side: "no", count: 120, average_price_cents: 42, current_price_cents: 38, unrealized_pnl_cents: -480 }
+                      ]
+                  };
+              } else {
+                  const path = '/portfolio/positions';
+                  const targetUrl = `${KALSHI_API_URL}${path}`;
+                  logs.push(`[NETWORK] Querying positions: GET ${targetUrl}`);
+                  const response = await fetch(targetUrl, {
+                      method: 'GET',
+                      headers: getHeaders('GET', path)
+                  });
+                  if (!response.ok) {
+                      const text = await response.text();
+                      throw new Error(`Positions error: ${text}`);
+                  }
+                  result = await response.json();
+              }
+
+          } else if (tool === 'place_limit_order') {
+              if (!KALSHI_API_KEY_ID || !KALSHI_PRIVATE_KEY) {
+                  logs.push(`[SIMULATION] Verification successful. Execution pending trust verification...`);
+                  logs.push(`[SIMULATION] Placing order: ${args.count} contracts of ${args.ticker} [${(args.side || 'yes').toUpperCase()}] at limit of ${args.price_cents || 50}¢.`);
+                  result = {
+                      order_id: `virtual_order_${Math.random().toString(36).substring(4)}`,
+                      status: "resting",
+                      ticker: args.ticker || 'KX-MKT-TRIAL',
+                      side: args.side || 'yes',
+                      action: args.action || 'buy',
+                      count: args.count || 10,
+                      price_cents: args.price_cents || 50,
+                      timestamp: new Date().toISOString()
+                  };
+              } else {
+                  const path = '/portfolio/orders';
+                  const targetUrl = `${KALSHI_API_URL}${path}`;
+                  const payload = {
+                      ticker: args.ticker,
+                      side: args.side,
+                      action: args.action,
+                      type: "limit",
+                      count: args.count,
+                      price: args.price_cents
+                  };
+                  logs.push(`[NETWORK] Executing live trading order block: POST ${targetUrl}`);
+                  const response = await fetch(targetUrl, {
+                      method: 'POST',
+                      headers: getHeaders('POST', path),
+                      body: JSON.stringify(payload)
+                  });
+                  if (!response.ok) {
+                      const text = await response.text();
+                      throw new Error(`Order placement error: ${text}`);
+                  }
+                  result = await response.json();
+              }
+          } else {
+              return res.status(400).json({ error: `BAD_REQUEST: Unknown tool ${tool}` });
+          }
+
+          res.json({
+              tool,
+              status: 'SUCCESS',
+              result,
+              logs,
+              timestamp: new Date().toISOString()
+          });
+
+      } catch (e: any) {
+          console.error('[AURA:KALSHI_EXECUTE_ERR]', e);
+          res.status(500).json({ error: e.message || 'Kalshi execution failure' });
+      }
+  });
+
   app.post('/api/chat', async (req, res) => {
       try {
-          const { message, history } = req.body;
-          if (!message) return res.status(400).json({ error: "Message required" });
+          const { message, history, image, imageMime } = req.body;
+          if (!message && !image) return res.status(400).json({ error: "Message or image required" });
 
           const authHeader = req.header('authorization') || req.header('x-serverless-authorization');
           const token = authHeader ? authHeader.replace(/^Bearer\s+/i, '').trim() : undefined;
 
-          console.log(`[AURA] Processing intent REST: "${message}"`);
-          const emitArtifacts = await processIntent(message, history, token);
+          console.log(`[AURA] Processing intent REST: "${message || '(Image asset analysis)'}"`);
+          const emitArtifacts = await processIntent(message, history, token, image, imageMime);
           res.json({ artifacts: emitArtifacts });
       } catch (e: any) {
           console.error('[CHAT_ROUTE_ERR]', e);

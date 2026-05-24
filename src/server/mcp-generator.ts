@@ -1,8 +1,17 @@
 import { CloudBuildClient } from '@google-cloud/cloudbuild';
 import { ServicesClient } from '@google-cloud/run';
+import { Storage } from '@google-cloud/storage';
 import fs from 'fs';
 import path from 'path';
 import { execSync } from 'child_process';
+
+/**
+ * Verifies if the returned ingress secure URL conforms strictly to GCP *.run.app production paths
+ */
+function trustGateInvariantCheck(url: string): boolean {
+    if (!url) return false;
+    return url.startsWith('https://') && url.includes('.run.app');
+}
 
 /**
  * Enterprise MCP server dynamic generator and deployment orchestrator.
@@ -189,86 +198,184 @@ CMD ["npm", "start"]
         logs.push(`Error configuring directories: ${fsErr.message}`);
     }
 
-    let deployedUrl = `https://${serviceName}-uc.a.run.app`;
-    let status = 'simulation_fallback';
+    // Validate required GCP parameters and credentials as strictly requested
+    const credentialsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+    if (!credentialsPath) {
+        throw new Error(
+            "SYSTEM_AUTHORIZATION_FAULT: Google Cloud credentials (GOOGLE_APPLICATION_CREDENTIALS) are missing in the runtime environment. " +
+            "Aura requires premium authorization keys to provision secure Cloud Build and Cloud Run instances."
+        );
+    }
 
-    if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+    if (!projectId || projectId === 'aura-enterprise-ai') {
+        const envProjectId = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT;
+        if (envProjectId) {
+            projectId = envProjectId;
+        } else {
+            throw new Error(
+                "SYSTEM_AUTHORIZATION_FAULT: Active GCP Project ID is unrecognized or defaulted. " +
+                "Please configure an explicit target Google Cloud project identifier (GOOGLE_CLOUD_PROJECT or GCP_PROJECT env variable) to execute deployments."
+            );
+        }
+    }
+
+    let deployedUrl = '';
+    let status = 'pending';
+    const tarPath = path.join(process.cwd(), 'mcp-build-temp', `${serviceName}.tar.gz`);
+
+    try {
+        console.log(`[${new Date().toISOString()}] Initializing real GCP deployment sequence for ${serviceName}...`);
+        logs.push("Connecting Google Cloud credentials secure key socket context...");
+
+        // Pack generated workspace building directory into tarball for GCS
+        logs.push(`Packing generated build directory payload into local tar archive: ${tarPath}`);
         try {
-            console.log(`[${new Date().toISOString()}] Initializing real GCP deployment for ${serviceName}...`);
-            logs.push("Connecting GCP credentials secure socket context...");
-            
-            const bucketName = `${projectId}-mcp-source`;
-            const sourceObject = `${serviceName}/source.tar.gz`;
-            
-            // Initialize Cloud Build Client
-            const cbClient = new CloudBuildClient({ projectId });
-            
-            const build = {
-                source: {
-                     storageSource: {
-                          bucket: bucketName,
-                          object: sourceObject
-                     }
+            execSync(`tar -czf "${tarPath}" -C "${buildDir}" .`);
+            logs.push("Workspace directory compressed successfully.");
+        } catch (tarErr: any) {
+            throw new Error(`SYSTEM_EXECUTION_FAULT: Directory compression failure: ${tarErr.message}`);
+        }
+
+        // Initialize Google Cloud Storage Client & upload build tarball
+        logs.push("Establishing secure connection with Google Cloud Storage client API...");
+        const storage = new Storage({ projectId });
+        const bucketName = `${projectId}-mcp-source`;
+        const sourceObject = `${serviceName}/source.tar.gz`;
+        const bucket = storage.bucket(bucketName);
+
+        const [bucketExists] = await bucket.exists();
+        if (!bucketExists) {
+            logs.push(`Google Cloud Storage bucket gs://${bucketName} does not exist. Creating bucket in region ${location}...`);
+            await storage.createBucket(bucketName, { location });
+            logs.push(`Created storage bucket: gs://${bucketName}`);
+        }
+
+        logs.push(`Uploading packed source workspace archive payload to GCS: gs://${bucketName}/${sourceObject}...`);
+        await bucket.upload(tarPath, {
+            destination: sourceObject
+        });
+        logs.push("Source payload archive uploaded to Google Cloud Storage successfully.");
+
+        // Initialize Cloud Build Client & trigger docker image build and push
+        logs.push("Initializing GCP Cloud Build task connection...");
+        const cbClient = new CloudBuildClient({ projectId });
+        const buildSpec = {
+            source: {
+                 storageSource: {
+                      bucket: bucketName,
+                      object: sourceObject
+                 }
+            },
+            steps: [
+                {
+                    name: 'gcr.io/cloud-builders/docker',
+                    args: ['build', '-t', `gcr.io/${projectId}/${serviceName}:latest`, '.']
                 },
-                steps: [
+                {
+                    name: 'gcr.io/cloud-builders/docker',
+                    args: ['push', `gcr.io/${projectId}/${serviceName}:latest`]
+                }
+            ],
+            images: [`gcr.io/${projectId}/${serviceName}:latest`]
+        };
+
+        logs.push(`Submitting Cloud Build task to assemble container: gcr.io/${projectId}/${serviceName}:latest...`);
+        const [buildOperation] = await cbClient.createBuild({
+             projectId,
+             build: buildSpec
+        });
+        logs.push("Cloud Build compile job posted successfully. Awaiting terminal status...");
+
+        const [buildResponse] = await buildOperation.promise();
+        const buildResponseStatus = buildResponse.status || '';
+        logs.push(`Cloud Build finished compiling. Status returned: ${buildResponseStatus}`);
+        
+        if (buildResponseStatus !== 'SUCCESS') {
+            throw new Error(`Google Cloud Build finished with failed status: ${buildResponseStatus}`);
+        }
+
+        // Initialize Cloud Run Client & Deploy Container to Cloud Run Service
+        logs.push("Connecting ServicesClient for Google Cloud Run container deployment...");
+        const runClient = new ServicesClient({ projectId });
+        const parent = `projects/${projectId}/locations/${location}`;
+        
+        const runService = {
+            template: {
+                containers: [
                     {
-                        name: 'gcr.io/cloud-builders/docker',
-                        args: ['build', '-t', `gcr.io/${projectId}/${serviceName}`, '.']
-                    },
-                    {
-                        name: 'gcr.io/cloud-builders/docker',
-                        args: ['push', `gcr.io/${projectId}/${serviceName}`]
+                        image: `gcr.io/${projectId}/${serviceName}:latest`,
+                        resources: {
+                            limits: {
+                                cpu: '1000m', // 1 vCPU allocation
+                                memory: '512Mi' // 512MB RAM allocation
+                            }
+                        }
                     }
                 ],
-                images: [`gcr.io/${projectId}/${serviceName}`]
-            };
+                scaling: {
+                    maxInstanceCount: 5
+                }
+            },
+            ingress: 'INGRESS_TRAFFIC_ALL' as const
+        };
 
-            logs.push(`Triggering Cloud Build for target image: gcr.io/${projectId}/${serviceName}...`);
-            const [operation] = await cbClient.createBuild({
-                 projectId,
-                 build
-            });
+        logs.push(`Provisioning serverless container instances on Cloud Run inside location ${location}...`);
+        const [runOperation] = await (runClient.createService({
+            parent,
+            serviceId: serviceName,
+            service: runService
+        }) as any);
 
-            // Wait for build to complete
-            const [buildResponse] = await operation.promise();
-            logs.push(`Cloud Build finished with compile completion: ${buildResponse.status}`);
+        logs.push("Cloud Run cluster creation triggered. Initializing container instance boot sequence...");
+        const [runResponse] = await runOperation.promise();
+        deployedUrl = runResponse.uri || '';
+        logs.push(`Real GCP Cloud Run container service provisioned successfully. Live Service URL: ${deployedUrl}`);
 
-            // Initialize Cloud Run Client
-            const runClient = new ServicesClient({ projectId });
-            const parent = `projects/${projectId}/locations/${location}`;
-            
-            const runService = {
-                template: {
-                    containers: [
-                        { image: `gcr.io/${projectId}/${serviceName}` }
+        // Granting Unauthenticated Access (Public Invoker IAM Action)
+        try {
+            logs.push(`Configuring public execution policy (roles/run.invoker -> allUsers) for service ${serviceName}...`);
+            await runClient.setIamPolicy({
+                resource: `projects/${projectId}/locations/${location}/services/${serviceName}`,
+                policy: {
+                    bindings: [
+                        {
+                            role: 'roles/run.invoker',
+                            members: ['allUsers']
+                        }
                     ]
                 }
-            };
-            
-            logs.push(`Provisioning serverless container instances on Cloud Run inside location ${location}...`);
-            const [runOperation] = await runClient.createService({
-                parent,
-                serviceId: serviceName,
-                service: runService
             });
-            
-            const [runResponse] = await runOperation.promise();
-            deployedUrl = runResponse.uri || deployedUrl;
-            status = 'success';
-            logs.push(`Real GCR/Cloud Run Provisioning Completed successfully. Live Endpoint URL is: ${deployedUrl}`);
-            
-        } catch (error: any) {
-            console.error('Error during real GCP deployment:', error);
-            status = 'deployment_error';
-            logs.push(`Cloud Build Failure: GCP authentication scopes or cluster access pending. Deployed server offline preview successfully.`);
+            logs.push("Public access policy bound and authorized successfully.");
+        } catch (iamErr: any) {
+            logs.push(`Warning: could not bind public run.invoker IAM permission: ${iamErr.message}. Resource access may require authorization keys.`);
         }
-    } else {
-        console.log(`[${new Date().toISOString()}] No Google Cloud credentials found. Falling back to simulated deployment...`);
-        status = 'success (simulated)';
-        logs.push("No live GCP developer accounts matched in current workspace. Defaulting to high-fidelity containerized simulation.");
-        logs.push("Packed dynamic server context tarball cleanly in workspace target memory.");
-        logs.push("Container build completed successfully in local workspace virtual layer.");
-        logs.push(`Local server simulation live revision listening at public ingress router: ${deployedUrl}`);
+
+        // Secure live Trust Policy Invariant Checks
+        logs.push("Executing strict Trust Gate Invariant Validation check on return service endpoint...");
+        if (!trustGateInvariantCheck(deployedUrl)) {
+            throw new Error(
+                `SECURITY_INVARIANT_VIOLATION: Secure channel breach. Active Cloud Run Ingress address ` +
+                `"${deployedUrl}" failed trustGateInvariantCheck against production *.run.app domain rules.`
+            );
+        }
+        logs.push("Trust Gate Invariant satisfied successfully.");
+        status = 'success';
+
+    } catch (deployErr: any) {
+        console.error('[AURA:MCP_DEPLOYMENT_FAULT]', deployErr);
+        status = 'deployment_error';
+        logs.push(`Deployment Failure: ${deployErr.message}`);
+        throw new Error(`SYSTEM_DEPLOYMENT_FAULT: ${deployErr.message}`);
+    } finally {
+        try {
+            // Cleanup local temporary source code bundle
+            if (fs.existsSync(tarPath)) {
+                fs.unlinkSync(tarPath);
+            }
+            if (fs.existsSync(buildDir)) {
+                fs.rmSync(buildDir, { recursive: true, force: true });
+            }
+        } catch {}
     }
 
     return {

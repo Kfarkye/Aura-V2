@@ -21,7 +21,7 @@ export function WinProbabilityChart({ data }: WinProbabilityChartProps) {
         <div className="bg-neutral-900 border border-neutral-800 rounded-2xl overflow-hidden shadow-2xl p-5 mb-4 animate-in fade-in slide-in-from-bottom-4 duration-700">
             <div className="flex items-center justify-between mb-6 pb-4 border-b border-neutral-800/60">
                 <div className="flex items-center gap-2">
-                    <Activity className="h-5 w-5 text-emerald-400" />
+                    <Activity className="h-5 w-5 text-neutral-400" />
                     <h4 className="text-sm font-semibold text-neutral-200">Live Win Probability</h4>
                 </div>
             </div>

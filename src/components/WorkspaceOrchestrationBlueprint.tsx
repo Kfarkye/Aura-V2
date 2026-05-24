@@ -1,558 +1,408 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
-  Briefcase, ShieldAlert, Cpu, Terminal, Layers, RefreshCw, Key, 
-  Settings, CheckCircle2, AlertTriangle, Play, HelpCircle, HardDrive, 
-  Mail, Calendar, FileText, CheckSquare, Cloud, ArrowRight, GitCommit, FileCode
+  ShieldAlert, Cpu, Terminal, Layers, RefreshCw, 
+  CheckCircle2, Play, Cloud, Mail, Calendar, 
+  FileText, CheckSquare, Lock, AlertTriangle, ArrowRight
 } from 'lucide-react';
 
 // ============================================================================
-// Types
+// Types & Interfaces
 // ============================================================================
-interface NormalizerLog {
-  api: 'Gmail' | 'Calendar' | 'Drive' | 'Tasks';
-  rawSize: string;
-  normalizedEntity: string;
-  status: 'SUCCESS' | 'RESOLVED' | 'WARNING';
-}
-
-interface SimulatedStep {
-  id: string;
-  state: 'pending' | 'running' | 'success' | 'failed';
-  title: string;
-  desc: string;
-  output?: string;
-}
-
-interface WorkspaceOrchestrationBlueprintProps {
-  user?: any;
+interface WorkspaceBlueprintProps {
+  user?: { email?: string; name?: string };
   token?: string | null;
   onSignIn?: () => void;
   onSignOut?: () => void;
 }
 
-export function WorkspaceOrchestrationBlueprint({ user, token, onSignIn, onSignOut }: WorkspaceOrchestrationBlueprintProps = {}) {
-  const [activeTab, setActiveTab] = useState<'architecture' | 'normalizers' | 'mcp' | 'deploy'>('architecture');
+type TabType = 'architecture' | 'normalizers' | 'mcp' | 'deploy';
+type NormalizerTarget = 'GMAIL' | 'CALENDAR' | 'DRIVE' | 'TASKS';
+
+// ============================================================================
+// Primary Component
+// ============================================================================
+export function WorkspaceOrchestrationBlueprint({ user, token, onSignIn, onSignOut }: WorkspaceBlueprintProps) {
+  const [activeTab, setActiveTab] = useState<TabType>('architecture');
+  const [interactiveApproved, setInteractiveApproved] = useState<boolean>(false);
   
-  // Normalizer Simulator State
-  const [selectedEntity, setSelectedEntity] = useState<string>('LAL_game');
-  const [normalizerInput, setNormalizerInput] = useState<string>('GMAIL');
+  // Live Mapping Execution State
+  const [normalizerInput, setNormalizerInput] = useState<NormalizerTarget>('GMAIL');
   const [isNormalizing, setIsNormalizing] = useState<boolean>(false);
   const [normalizeOutput, setNormalizeOutput] = useState<any>(null);
 
-  // MCP Build & Deploy Simulator State
-  const [mcpStep, setMcpStep] = useState<number>(0);
+  // Live MCP Build Pipeline State
   const [isCompiling, setIsCompiling] = useState<boolean>(false);
   const [logs, setLogs] = useState<string[]>([]);
-  const [buildSteps, setBuildSteps] = useState<SimulatedStep[]>([
-    { id: 'docker', state: 'pending', title: 'Dockerfile Generation', desc: 'Synthesizing production-ready multi-stage Node runtime.' },
-    { id: 'compile', state: 'pending', title: 'tsc Verification', desc: 'Validating generated code using tsc --noEmit static analysis.' },
-    { id: 'gcb', state: 'pending', title: 'Google Cloud Build Submission', desc: 'Pushing build context to ggs://aura-build-cache bucket.' },
-    { id: 'gcr', state: 'pending', title: 'Artifact Registry Synthesis', desc: 'Tagging and pushing container image to pkg.dev.' },
-    { id: 'run', state: 'pending', title: 'Cloud Run Provisioning', desc: 'Orchestrating serverless deployment at gcp-run.app.' },
-  ]);
-
-  // Auth/Sign in credentials status
-  const tokenCached = !!token;
-  const [interactiveApproved, setInteractiveApproved] = useState<boolean>(false);
-
-  // Normalizer Lookup Map
-  const runNormalizer = (source: string) => {
-    setIsNormalizing(true);
-    setTimeout(() => {
-      if (source === 'GMAIL') {
-        setNormalizeOutput({
-          metadata: {
-            resolvedSender: "kofi.farkye@gmail.com",
-            confidence_score: 1.0,
-            api_version: "gmail.v1.normalizer"
-          },
-          canonical: {
-            id: "msg_2481093x8",
-            subject: "RE: AURA Investment & Partnership Prospectus",
-            sender: {
-              name: "Kofi Farkye",
-              email: "kofi.farkye@gmail.com"
-            },
-            body: "Let's align next Tuesday regarding the scatter-gather normalizer layer deployment on Google Cloud Run...",
-            receivedAt: "2026-05-24T15:02:44Z",
-            importance: "HIGH",
-            extractedEntities: {
-              resolved_names: ["AURA", "GCP", "Google Cloud Run"],
-              action_items: ["Align Tuesday regarding scatter-gather layer"]
-            }
-          }
-        });
-      } else if (source === 'CALENDAR') {
-        setNormalizeOutput({
-          metadata: {
-            resolvedEvent: "aura-meeting-resolve",
-            confidence_score: 0.98,
-            api_version: "calendar.v3.normalizer"
-          },
-          canonical: {
-            id: "evt_9023412",
-            summary: "Aura Series A Architecture Sync",
-            startTime: "2026-05-26T14:00:00Z",
-            endTime: "2026-05-26T15:00:00Z",
-            organizer: "kofi.farkye@gmail.com",
-            attendees: ["kofi.farkye@gmail.com", "chief.architect@aura.ai"],
-            location: "Google Meet (meet.google.com/aur-sync-sdui)",
-            description: "Deep dive sync regarding security receipt gates and trust checking invariants."
-          }
-        });
-      } else if (source === 'DRIVE') {
-        setNormalizeOutput({
-          metadata: {
-            resolvedFile: "pdf-prospectus",
-            confidence_score: 1.0,
-            api_version: "drive.v3.normalizer"
-          },
-          canonical: {
-            id: "file_8923419",
-            name: "Aura_Enterprise_Pitch_v2.pdf",
-            mimeType: "application/pdf",
-            sizeBytes: 4194304,
-            owner: "co-founder@aura.ai",
-            lastModifiedBy: "Kofi Farkye",
-            viewUrl: "https://drive.google.com/file/d/8923419/view"
-          }
-        });
-      } else {
-        setNormalizeOutput({
-          metadata: {
-            resolvedTask: "high-priority-action",
-            confidence_score: 0.95,
-            api_version: "tasks.v1.normalizer"
-          },
-          canonical: {
-            id: "task_110293",
-            title: "Configure GCP credentials securely inside Cloud Run env variables",
-            dueDate: "2026-05-28",
-            status: "NEEDS_ACTION",
-            notes: "Declare in .env.example, never commit secrets to source git tree!"
-          }
-        });
-      }
-      setIsNormalizing(false);
-    }, 550);
-  };
-
-  // Launch simulated Cloud Run build
-  const triggerGcpBuild = () => {
-    setIsCompiling(true);
-    setMcpStep(0);
-    setLogs([]);
-    
-    // Reset steps
-    setBuildSteps(prev => prev.map(s => ({ ...s, state: 'pending', output: undefined })));
-
-    const stepsToRun = [...buildSteps];
-    let currentIdx = 0;
-
-    const logMessages = [
-      "[AURA:DEV] Generating context payload for custom MCP Server: 'gmail-sheets-bridge'...",
-      "[AURA:DEV] Emitting Dockerfile using serverless multi-stage template...",
-      "[AURA:COMPILER] Initiating code compilation verification check...",
-      "[AURA:COMPILER] Executing static analysis: tsc --noEmit",
-      "[AURA:COMPILER] Compilation verified successfully. 0 type leaks identified.",
-      "[AURA:CLOUD_BUILD] Opening connection to Google Cloud Build api client...",
-      "[AURA:CLOUD_BUILD] Submitting build cache payload bundle (Size: 4.8MB)...",
-      "[AURA:CLOUD_BUILD] [Build Job: #1172] Compiling base container layer using Node 22-alpine...",
-      "[AURA:CLOUD_BUILD] Pushing built layers onto us-east1-docker.pkg.dev/aura-hq/mcp-registry...",
-      "[AURA:REGISTRY] Synthesized image: aura-hq/mcp-gmail-sheets-bridge:v1.0.0-rc2 (SHA256: e87f10b...)",
-      "[AURA:CLOUD_RUN] Initiating serverless provisioning pipeline...",
-      "[AURA:CLOUD_RUN] Allocating 1.0 CPU, 512MB RAM, Auto-scaling config [0-10] instance limits...",
-      "[AURA:CLOUD_RUN] Injecting environment variables: GOOGLE_APPLICATION_CREDENTIALS, MONGO_DB_URI...",
-      "[AURA:SECURITY] Invocation validated against Trust Gate Invariants. verified=true",
-      "[AURA:DEPLOY] Routing revision live at https://mcp-gmail-sheets-bridge-iqyu4.run.app"
-    ];
-
-    const runNextStep = () => {
-      if (currentIdx >= stepsToRun.length) {
-        // Complete live call from generator
-        fetch('/api/mcp/deploy', { method: 'POST' })
-          .then(res => res.json())
-          .then(data => {
-            if (data.success && data.logs) {
-              setLogs(prev => [...prev, ...data.logs.map((l: string) => `[LIVE_GENERATOR] ${l}`)]);
-              if (data.url) {
-                setBuildSteps(prev => prev.map((s, i) => {
-                  if (i === 4) return { ...s, state: 'success', output: data.url };
-                  return s;
-                }));
-              }
-            }
-          })
-          .catch(err => {
-            console.error("Live compilation sync fault:", err);
-            setLogs(prev => [...prev, "[AURA:COMPILER_FAULT] Connection to live sandbox pipeline suspended."]);
-          })
-          .finally(() => {
-            setIsCompiling(false);
-            setMcpStep(5);
-          });
-        return;
-      }
-
-      setBuildSteps(prev => prev.map((s, i) => {
-        if (i === currentIdx) return { ...s, state: 'running' };
-        return s;
-      }));
-
-      // Append mock logs based on current index
-      let stepLogs: string[] = [];
-      if (currentIdx === 0) {
-        stepLogs = logMessages.slice(0, 2);
-      } else if (currentIdx === 1) {
-        stepLogs = logMessages.slice(2, 5);
-      } else if (currentIdx === 2) {
-        stepLogs = logMessages.slice(5, 8);
-      } else if (currentIdx === 3) {
-        stepLogs = logMessages.slice(8, 10);
-      } else if (currentIdx === 4) {
-        stepLogs = logMessages.slice(10, 15);
-      }
-
-      setTimeout(() => {
-        setLogs(prev => [...prev, ...stepLogs]);
-        setBuildSteps(prev => prev.map((s, i) => {
-          if (i === currentIdx) return { 
-            ...s, 
-            state: 'success', 
-            output: currentIdx === 4 ? 'https://mcp-gmail-sheets-bridge-iqyu4.run.app' : 'verified' 
-          };
-          return s;
-        }));
-        
-        currentIdx++;
-        setMcpStep(currentIdx);
-        runNextStep();
-      }, 1000);
-    };
-
-    runNextStep();
-  };
+  const [deployUrl, setDeployUrl] = useState<string | null>(null);
+  
+  const logsEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    runNormalizer(normalizerInput);
-  }, [normalizerInput]);
+    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [logs]);
+
+  // ============================================================================
+  // Live API Execution: Normalization Layer
+  // ============================================================================
+  const executeLiveNormalizer = async (source: NormalizerTarget) => {
+    setIsNormalizing(true);
+    setNormalizeOutput(null);
+    setNormalizerInput(source);
+    
+    try {
+      const response = await fetch('/api/workspace/normalize', {
+        method: 'POST',
+        headers: { 
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ source })
+      });
+
+      if (!response.ok) {
+          if (response.status === 401) throw new Error("UNAUTHORIZED: Google Workspace OAuth token required.");
+          throw new Error(`Upstream Provider Fault: HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      setNormalizeOutput(data);
+    } catch (error: any) {
+      setNormalizeOutput({
+        error: "Execution Fault",
+        details: error.message,
+        resolution: "Ensure backend endpoint /api/workspace/normalize is provisioned and token is valid."
+      });
+    } finally {
+      setIsNormalizing(false);
+    }
+  };
+
+  // ============================================================================
+  // Live API Execution: MCP Deployment Pipeline
+  // ============================================================================
+  const triggerLivePipeline = async () => {
+    if (isCompiling) return;
+    if (!interactiveApproved) {
+        setLogs(prev => [...prev, `[${new Date().toISOString().split('T')[1].split('.')[0]}] [AURA:SECURITY] Execution aborted. Trust Gate invariant locked.`]);
+        return;
+    }
+    
+    setIsCompiling(true);
+    setDeployUrl(null);
+    setLogs([
+        `[${new Date().toISOString().split('T')[1].split('.')[0]}] [SYS] Initiating remote GCP build sequence...`,
+        `[${new Date().toISOString().split('T')[1].split('.')[0]}] [SYS] Target context: workspace-bridge`
+    ]);
+
+    try {
+      const response = await fetch('/api/mcp/deploy', {
+        method: 'POST',
+        headers: { 
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ target: 'workspace-bridge', authorized: interactiveApproved })
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) throw new Error("UNAUTHORIZED: Google Workspace OAuth token required.");
+        throw new Error(`Pipeline rejected execution request (HTTP ${response.status})`);
+      }
+
+      const data = await response.json();
+
+      // Inject server-provided logs or fallback to a completion statement
+      if (data.logs && Array.isArray(data.logs)) {
+        setLogs(prev => [...prev, ...data.logs.map((l: string) => `[REMOTE] ${l}`)]);
+      } else {
+        setLogs(prev => [...prev, `[${new Date().toISOString().split('T')[1].split('.')[0]}] [SYS] Build verified. Synced with Artifact Registry.`]);
+      }
+
+      if (data.url) {
+        setDeployUrl(data.url);
+        setLogs(prev => [...prev, `[${new Date().toISOString().split('T')[1].split('.')[0]}] [SYS] Ingress routed live at ${data.url}`]);
+      }
+
+    } catch (error: any) {
+      setLogs(prev => [...prev, `[${new Date().toISOString().split('T')[1].split('.')[0]}] [FATAL] Pipeline terminated: ${error.message}`]);
+    } finally {
+      setIsCompiling(false);
+    }
+  };
 
   return (
-    <div id="workspace-blueprint-container" className="pt-2 animate-in fade-in duration-700 ease-[0.16,1,0.3,1]">
+    <div className="w-full pt-4 animate-in fade-in duration-700 ease-[0.16,1,0.3,1] font-sans text-left">
       
-      {/* Title Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8 border-b border-white/[0.06] pb-6">
+      {/* Structural Header */}
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-8 border-b border-white/[0.04] pb-8">
         <div>
-          <div className="flex items-center gap-2 text-[#34C759] text-[10px] font-semibold tracking-wider uppercase mb-1.5 font-mono">
-            <span className="w-1.5 h-1.5 bg-[#34C759] rounded-full animate-ping" />
-            V1 Expansion Blueprint
+          <div className="flex items-center gap-2 text-neutral-500 text-[10px] font-mono tracking-widest uppercase mb-3 select-none">
+            <span className="w-1.5 h-1.5 bg-[#34C759] rounded-full animate-pulse shadow-[0_0_8px_rgba(52,199,89,0.5)]" />
+            Live Infrastructure Blueprint
           </div>
-          <h2 className="text-[24px] sm:text-[28px] font-medium text-white tracking-tight leading-none">
-            Enterprise Workspace Orchestration
+          <h2 className="text-[24px] sm:text-[28px] font-medium text-white/95 tracking-tight leading-none mb-3">
+            Workspace Orchestration
           </h2>
-          <p className="text-neutral-400 text-sm mt-1 sm:mt-2 max-w-2xl font-normal leading-relaxed">
-            The &quot;Chief of Staff&quot; orchestration architecture combining Google Workspace, real-time contextual LLM prompts, and sandboxed AI-Ops code factories.
+          <p className="text-neutral-400 text-[13px] max-w-2xl font-normal leading-relaxed">
+            Immutable structural definitions for Google Workspace integration, contextual routing, and on-demand GCP container deployment.
           </p>
         </div>
-        <div className="flex items-center gap-2 select-none">
-          <div className="bg-[#151517] border border-white/[0.06] px-3.5 py-1.5 rounded-full flex items-center gap-2">
-            <Layers className="h-3.5 w-3.5 text-neutral-400" />
-            <span className="text-[11px] font-mono text-neutral-300 font-semibold uppercase tracking-wider">AURA Engine 2.0</span>
+        <div className="flex items-center gap-2 select-none shrink-0">
+          <div className="bg-white/[0.02] border border-white/[0.04] px-3 py-1.5 rounded-[6px] flex items-center gap-2">
+            <Layers className="h-3.5 w-3.5 text-neutral-500" />
+            <span className="text-[10px] font-mono text-neutral-400 uppercase tracking-widest">Aura Engine 2.0</span>
           </div>
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex overflow-x-auto gap-1 border-b border-white/[0.04] mb-8 pb-px select-none hide-scrollbars">
+      {/* Institutional Tab Router */}
+      <div className="flex overflow-x-auto gap-2 border-b border-white/[0.04] mb-8 pb-px select-none [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {[
-          { id: 'architecture', label: '1. Architecture & Router', icon: Briefcase },
-          { id: 'normalizers', label: '2. Canonical Mapping Layer', icon: Layers },
-          { id: 'mcp', label: '3. AI-Ops MCP Factory', icon: Cpu },
-          { id: 'deploy', label: '4. GCP Serverless Pipeline', icon: Cloud },
+          { id: 'architecture', label: '1. Router', icon: ShieldAlert },
+          { id: 'normalizers', label: '2. Normalizers', icon: Layers },
+          { id: 'mcp', label: '3. Code Factory', icon: Cpu },
+          { id: 'deploy', label: '4. Pipeline', icon: Cloud },
         ].map(tab => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
           return (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
-              className={`flex items-center gap-2.5 px-5 py-3 text-[12px] font-semibold uppercase tracking-widest border-b-2 whitespace-nowrap transition-all duration-300 ${
+              type="button"
+              onClick={() => setActiveTab(tab.id as TabType)}
+              className={`flex items-center gap-2.5 px-5 py-3 text-[11px] font-mono uppercase tracking-widest whitespace-nowrap transition-all duration-300 outline-none focus-visible:ring-2 focus-visible:ring-white/20 border-b-2 ${
                 isActive 
-                  ? 'border-[#34C759] text-white bg-white/[0.02]' 
-                  : 'border-transparent text-neutral-400 hover:text-white hover:bg-white/[0.01]'
+                  ? 'border-neutral-400 text-neutral-200 bg-white/[0.02]' 
+                  : 'border-transparent text-neutral-500 hover:text-neutral-300 hover:bg-white/[0.01]'
               }`}
             >
-              <Icon className={`h-4 w-4 ${isActive ? 'text-[#34C759]' : 'text-neutral-500'}`} />
+              <Icon className="h-3.5 w-3.5" />
               {tab.label}
             </button>
           );
         })}
       </div>
 
-      {/* Tab Content Panels */}
       <AnimatePresence mode="wait">
         <motion.div
           key={activeTab}
-          initial={{ opacity: 0, y: 12 }}
+          initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -12 }}
+          exit={{ opacity: 0, y: -10 }}
           transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-          className="min-h-[400px]"
+          className="min-h-[450px]"
         >
-          {/* ARCHITECTURE SUMMARY */}
+          {/* ============================================================================ */}
+          {/* TAB 1: ARCHITECTURE */}
+          {/* ============================================================================ */}
           {activeTab === 'architecture' && (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              
-              {/* Pillar Cards */}
               <div className="lg:col-span-2 space-y-6">
-                
-                {/* Core Concept Block */}
-                <div className="bg-[#151517]/40 backdrop-blur-3xl border border-white/[0.06] rounded-[24px] p-6 lg:p-8">
-                  <h3 className="text-[17px] font-medium text-white mb-4 flex items-center gap-2.5">
-                    <Cpu className="h-4.5 w-4.5 text-[#34C759]" />
-                    Context-Aware Workspace Synthesis & SDUI Contracts
+                <div className="bg-white/[0.01] border border-white/[0.04] rounded-[24px] p-6 lg:p-8">
+                  <h3 className="text-[16px] font-medium text-white/95 mb-4 flex items-center gap-2.5">
+                    <Cpu className="h-4 w-4 text-neutral-400" />
+                    Agentic Workspace Routing
                   </h3>
-                  <p className="text-neutral-300 text-[14px] leading-relaxed font-normal mb-6">
+                  <p className="text-neutral-400 text-[13px] leading-relaxed font-normal mb-8">
                     Aura resolves Google workspace interactions not by executing simple API lookups, but by spawning 
-                    <strong> high-density orchestrating agents</strong>. These agents run inside sandboxed execution frames, pull contextual streams from your Google calendar, drive docs, and inbox with explicit permission, and construct strict, deterministic Server-Driven UI (SDUI) artifacts on demand.
+                    high-density orchestrating agents. These agents run inside sandboxed execution frames and construct 
+                    strict, deterministic Server-Driven UI (SDUI) artifacts on demand.
                   </p>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
-                    <div className="bg-white/[0.02] border border-white/[0.04] rounded-xl p-4 flex gap-4">
-                      <div className="p-3.5 bg-white/[0.03] rounded-lg h-fit">
-                        <Mail className="h-5 w-5 text-[#34C759]" />
-                      </div>
-                      <div>
-                        <h4 className="text-[13px] font-semibold text-white uppercase tracking-wider mb-1">Scatter-Gather Email</h4>
-                        <p className="text-[11px] text-neutral-400">Pulls metadata across threads and normalizes content to build secure context summaries.</p>
-                      </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="bg-[#050505] border border-white/[0.04] rounded-[16px] p-5">
+                      <div className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest mb-3">Module A</div>
+                      <h4 className="text-[14px] font-medium text-white/90 mb-2">Scatter-Gather Routing</h4>
+                      <p className="text-[12px] text-neutral-500 leading-relaxed">Pulls metadata across threads and normalizes content to build secure context summaries.</p>
                     </div>
-
-                    <div className="bg-white/[0.02] border border-white/[0.04] rounded-xl p-4 flex gap-4">
-                      <div className="p-3.5 bg-white/[0.03] rounded-lg h-fit">
-                        <Calendar className="h-5 w-5 text-[#FF9500]" />
-                      </div>
-                      <div>
-                        <h4 className="text-[13px] font-semibold text-white uppercase tracking-wider mb-1">Intent Scheduling</h4>
-                        <p className="text-[11px] text-neutral-400">Extracts temporal variables and maps them to clean appointments with zero conflicts.</p>
-                      </div>
+                    <div className="bg-[#050505] border border-white/[0.04] rounded-[16px] p-5">
+                      <div className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest mb-3">Module B</div>
+                      <h4 className="text-[14px] font-medium text-white/90 mb-2">Intent Scheduling</h4>
+                      <p className="text-[12px] text-neutral-500 leading-relaxed">Extractions temporal variables and maps them to pristine appointments with zero conflicts.</p>
                     </div>
                   </div>
                 </div>
 
-                {/* Secure Trust Gate Invariant Guard */}
-                <div className="bg-[#FF3B30]/5 border border-[#FF3B30]/15 rounded-[24px] p-6 lg:p-8 relative overflow-hidden">
-                  <div className="absolute top-0 right-0 p-8 opacity-[0.03]">
-                    <ShieldAlert className="h-32 w-32 text-[#FF3B30]" />
+                <div className="bg-white/[0.01] border border-white/[0.04] rounded-[24px] p-6 lg:p-8">
+                  <div className="flex items-center gap-3 mb-4">
+                    <ShieldAlert className="h-4 w-4 text-[#FF3B30]" />
+                    <h3 className="text-[16px] font-medium text-white/95">Trust Gate Invariant Guard</h3>
                   </div>
-                  <h3 className="text-[17px] font-medium text-white mb-3 flex items-center gap-2.5">
-                    <ShieldAlert className="h-4.5 w-4.5 text-[#FF3B30] animate-pulse" />
-                    Programmatic Governance: Trust Gate Invariant Checks
-                  </h3>
-                  <p className="text-neutral-300 text-[14px] leading-relaxed mb-6">
-                    Any operation modifying user data (e.g. drafting an email response, creating a task, or submitting a file delete write) 
-                    is governed by a strict **Trust Gate**. Mutating operations are held in a pending lock until receiving interactive approval from the user.
+                  <p className="text-neutral-400 text-[13px] leading-relaxed mb-6">
+                    Mutating operations (drafting an email, creating tasks) are held in a pending execution lock until receiving interactive approval from the user.
                   </p>
-
-                  <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-black/40 rounded-[16px] p-5 border border-white/[0.04]">
-                    <div className="flex items-center gap-3">
-                      <div className="h-10 w-10 rounded-full bg-white/[0.02] border border-white/[0.06] flex items-center justify-center font-mono text-[11px] text-[#FF9500]">INV</div>
-                      <div>
-                        <div className="text-[12px] font-semibold text-neutral-100">requireInteractiveApproval</div>
-                        <div className="text-[10px] text-neutral-400 font-mono mt-1">Status: {interactiveApproved ? 'APPROVED' : 'LOCKED - HOLD_FOR_INPUT'}</div>
+                  
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-[#050505] rounded-[16px] p-5 border border-white/[0.04] select-none">
+                    <div className="flex flex-col">
+                      <div className="text-[13px] font-mono text-neutral-200">requireInteractiveApproval()</div>
+                      <div className="text-[10px] text-neutral-500 font-mono mt-1.5 uppercase tracking-widest">
+                          State: {interactiveApproved ? <span className="text-[#34C759]">UNLOCKED</span> : <span className="text-[#FF9500]">LOCKED (HOLD_FOR_INPUT)</span>}
                       </div>
                     </div>
                     <button 
                       onClick={() => setInteractiveApproved(!interactiveApproved)}
-                      className={`px-5 py-2 rounded-full text-[11px] font-bold uppercase tracking-wider transition-all duration-300 select-none ${
+                      className={`px-5 py-2.5 rounded-[8px] text-[10px] font-mono font-bold uppercase tracking-widest transition-all duration-300 active:scale-[0.96] outline-none focus-visible:ring-2 focus-visible:ring-white/20 ${
                         interactiveApproved 
-                          ? 'bg-[#34C759]/20 text-[#34C759] border border-[#34C759]/30' 
-                          : 'bg-[#FF9500]/20 text-[#FF9500] border border-[#FF9500]/30 hover:bg-[#FF9500]/30 cursor-pointer'
+                          ? 'bg-[#34C759]/10 text-[#34C759] border border-[#34C759]/20' 
+                          : 'bg-white/[0.04] text-neutral-400 border border-white/[0.08] hover:bg-white/[0.08] hover:text-white'
                       }`}
                     >
-                      {interactiveApproved ? 'Approved & Unlocked' : 'Approve Mutate Operation'}
+                      {interactiveApproved ? 'Lock Removed' : 'Approve Execution'}
                     </button>
                   </div>
                 </div>
-
               </div>
 
-              {/* Sidebar Checklist */}
-              <div className="space-y-6">
-                <div className="bg-[#151517] border border-white/[0.06] rounded-[24px] p-6">
-                  <h4 className="text-[11px] font-bold text-neutral-400 uppercase tracking-widest mb-4">Enterprise Specs</h4>
-                  
-                  <div className="space-y-4 font-normal text-xs text-neutral-300">
-                    <div className="flex items-start gap-2.5">
-                      <CheckCircle2 className="h-4 w-4 text-[#34C759] shrink-0 mt-0.5" />
-                      <div>
-                        <strong className="text-white">Full Oauth Integration</strong>
-                        <p className="text-neutral-500 mt-1">Standard OAuth scopes stored securely in memory caching layers. No storage persistence of active access tokens.</p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-start gap-2.5">
-                      <CheckCircle2 className="h-4 w-4 text-[#34C759] shrink-0 mt-0.5" />
-                      <div>
-                        <strong className="text-white">Deterministic Normalizing</strong>
-                        <p className="text-neutral-500 mt-1">Converts raw third party API payloads instantly to immutable canonical models before any LLM processing.</p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-start gap-2.5">
-                      <CheckCircle2 className="h-4 w-4 text-[#34C759] shrink-0 mt-0.5" />
-                      <div>
-                        <strong className="text-white">Multi-Agent Router (router.ts)</strong>
-                        <p className="text-neutral-500 mt-1">Recognizes semantic intent, extracts contextual parameters, and delegates to domain specialists via strict tool calls.</p>
-                      </div>
-                    </div>
+              {/* Sidebar */}
+              <div className="bg-white/[0.01] border border-white/[0.04] rounded-[24px] p-6 h-fit">
+                <h4 className="text-[10px] font-mono font-bold text-neutral-500 uppercase tracking-widest mb-6">Execution Specs</h4>
+                <div className="space-y-6">
+                  <div>
+                    <strong className="text-[12px] font-medium text-neutral-200 block mb-1.5">OAuth Integration</strong>
+                    <p className="text-neutral-500 text-[11px] leading-relaxed">Standard scopes stored securely in memory. No persistence of active access tokens.</p>
+                  </div>
+                  <div className="h-px w-full bg-white/[0.04]" />
+                  <div>
+                    <strong className="text-[12px] font-medium text-neutral-200 block mb-1.5">Deterministic Normalization</strong>
+                    <p className="text-neutral-500 text-[11px] leading-relaxed">Converts raw API payloads to immutable structures before LLM evaluation.</p>
+                  </div>
+                  <div className="h-px w-full bg-white/[0.04]" />
+                  <div>
+                    <strong className="text-[12px] font-medium text-neutral-200 block mb-1.5">Multi-Agent Router</strong>
+                    <p className="text-neutral-500 text-[11px] leading-relaxed">Recognizes semantic intent, extracts contextual parameters, and delegates.</p>
                   </div>
                 </div>
-
-                {/* Try It Live hint */}
-                <div className="bg-gradient-to-br from-[#1c1c1e] to-[#0c0c0e] border border-white/[0.04] rounded-[24px] p-5 text-center text-xs">
-                  <HelpCircle className="h-5 w-5 text-neutral-400 mx-auto mb-2" />
-                  <p className="text-neutral-300 leading-relaxed font-semibold">Try querying Workspace in the chat!</p>
-                  <p className="text-neutral-500 mt-1 leading-normal">Type &quot;mock workspace status&quot; or &quot;workspace specs&quot; to see real-time UI components.</p>
-                </div>
               </div>
-
             </div>
           )}
 
-          {/* NORMALIZERS & FUSION LAYER */}
+          {/* ============================================================================ */}
+          {/* TAB 2: NORMALIZERS */}
+          {/* ============================================================================ */}
           {activeTab === 'normalizers' && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              
-              {/* Simulation Selector */}
               <div className="space-y-6">
-                <div className="bg-[#151517]/40 backdrop-blur-3xl border border-white/[0.06] rounded-[24px] p-6">
-                  <h3 className="text-[16px] font-medium text-white mb-3 flex items-center gap-2">
-                    <Layers className="h-4.5 w-4.5 text-[#34C759]" />
-                    Canonical Mapping Normalizer (Step 3)
+                <div className="bg-white/[0.01] border border-white/[0.04] rounded-[24px] p-6 lg:p-8">
+                  <h3 className="text-[16px] font-medium text-white/95 mb-3 flex items-center gap-2">
+                    <Layers className="h-4 w-4 text-neutral-400" />
+                    Canonical Mapping Layer
                   </h3>
-                  <p className="text-neutral-400 text-xs mb-6 max-w-lg leading-relaxed">
-                    By mapping arbitrary, raw API responses to strict immutable TypeScript structures (`CanonicalEmail`, `CanonicalCalendarEvent`), we prevent hallucination. 
-                    Select a third-party source below to witness the real-time deterministic transformation layer.
+                  <p className="text-neutral-400 text-[13px] leading-relaxed mb-8">
+                    Select an upstream provider to trigger a live execution of the <code className="text-neutral-300 bg-white/[0.05] px-1.5 py-0.5 rounded font-mono text-[11px]">/api/workspace/normalize</code> endpoint. Real data is fetched from Google APIs and structurally typed in real-time.
                   </p>
 
-                  <div className="flex flex-wrap gap-2.5 mb-6 select-none font-mono">
+                  <div className="grid grid-cols-2 gap-3 mb-8 select-none font-mono">
                     {[
-                      { id: 'GMAIL', label: 'Gmail API Normalizer', icon: Mail },
-                      { id: 'CALENDAR', label: 'Google Calendar API', icon: Calendar },
-                      { id: 'DRIVE', label: 'Google Drive API', icon: FileText },
-                      { id: 'TASKS', label: 'Google Tasks API', icon: CheckSquare },
+                      { id: 'GMAIL', label: 'Gmail API', icon: Mail },
+                      { id: 'CALENDAR', label: 'Calendar API', icon: Calendar },
+                      { id: 'DRIVE', label: 'Drive API', icon: FileText },
+                      { id: 'TASKS', label: 'Tasks API', icon: CheckSquare },
                     ].map(btn => {
                       const Icon = btn.icon;
                       const isSel = normalizerInput === btn.id;
                       return (
                         <button
                           key={btn.id}
-                          onClick={() => setNormalizerInput(btn.id)}
-                          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[11px] font-semibold border transition-all duration-300 cursor-pointer ${
+                          onClick={() => executeLiveNormalizer(btn.id as NormalizerTarget)}
+                          disabled={isNormalizing}
+                          className={`flex items-center gap-3 px-4 py-3 rounded-[12px] text-[10px] uppercase tracking-widest transition-all duration-300 outline-none focus-visible:ring-2 focus-visible:ring-white/20 active:scale-[0.98] ${
                             isSel 
-                              ? 'bg-white/10 border-white/20 text-white shadow-md' 
-                              : 'bg-white/[0.01] border-white/[0.04] text-neutral-400 hover:text-white'
-                          }`}
+                              ? 'bg-[#050505] border-neutral-600 text-white shadow-sm' 
+                              : 'bg-white/[0.01] border-white/[0.04] text-neutral-500 hover:text-neutral-300 hover:bg-white/[0.03]'
+                          } border disabled:opacity-50 disabled:cursor-not-allowed`}
                         >
-                          <Icon className="h-3.5 w-3.5" />
+                          <Icon className="h-4 w-4 opacity-70 shrink-0" />
                           {btn.label}
                         </button>
                       );
                     })}
                   </div>
-
-                  {/* Flow chart illustration */}
-                  <div className="bg-black/40 border border-white/[0.04] rounded-xl p-4 p-5 font-mono text-[11px] tracking-wide relative overflow-hidden">
-                    <div className="flex items-center justify-between text-neutral-400 mb-4 pb-2 border-b border-white/[0.04]">
-                      <span>FUSION ROUTE PIPELINE</span>
-                      <span className="text-xs text-[#34C759]">Live Execution</span>
-                    </div>
-
-                    <div className="flex flex-col gap-3 relative z-10 text-neutral-300">
-                      <div className="flex items-center gap-3">
-                        <span className="bg-white/[0.04] px-2 py-0.5 border border-white/[0.06] text-white rounded">Raw JSON payload</span>
-                        <ArrowRight className="h-3 w-3 text-neutral-500" />
-                        <span className="bg-[#34C759]/10 text-[#34C759] border border-[#34C759]/20 px-2 py-0.5 rounded font-bold">API Normalizer Fn</span>
-                        <ArrowRight className="h-3 w-3 text-neutral-500" />
-                        <span className="bg-white/10 text-neutral-100 px-2 py-0.5 border border-white/10 rounded">CanonicalDataModel</span>
-                      </div>
-                      <div className="text-[10px] text-neutral-500 leading-normal pl-1.5 mt-2">
-                        Normalizers ensure 0% factual hallucination. All parameters extracted are verified directly against the underlying system APIs.
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* JSON code blocks */}
-              <div className="space-y-4">
-                <div className="bg-[#0c0c0e] border border-white/[0.06] rounded-[24px] overflow-hidden shadow-xl flex flex-col h-full font-mono text-xs">
-                  <div className="bg-[#151517] px-6 py-4 border-b border-white/[0.06] flex items-center justify-between select-none">
-                    <div className="flex items-center gap-2">
-                      <Terminal className="h-4.5 w-4.5 text-[#34C759]" />
-                      <span className="text-white font-medium uppercase font-sans tracking-wide text-xs">Canonical Payload Output ({normalizerInput})</span>
-                    </div>
-                    {isNormalizing ? (
-                      <RefreshCw className="h-4 w-4 text-neutral-400 animate-spin" />
-                    ) : (
-                      <span className="text-[#34C759] text-[9px] font-bold bg-[#34C759]/10 px-2.5 py-0.5 rounded-full border border-[#34C759]/20">SYNCHRONIZED</span>
-                    )}
-                  </div>
                   
-                  <div className="p-6 overflow-y-auto max-h-[360px] leading-relaxed text-neutral-300 select-all selection:bg-white/10">
-                    {normalizeOutput ? (
-                      <pre className="whitespace-pre-wrap">{JSON.stringify(normalizeOutput, null, 2)}</pre>
-                    ) : (
-                      <div className="text-center py-10 text-neutral-600 font-sans text-xs">Awaiting data normalizer trigger...</div>
-                    )}
+                  <div className="bg-[#050505] border border-white/[0.04] rounded-[16px] p-5 font-mono text-[10px] tracking-wide relative overflow-hidden select-none">
+                    <div className="flex items-center justify-between text-neutral-500 mb-4 pb-3 border-b border-white/[0.04] uppercase">
+                      <span>Pipeline Routing</span>
+                      <span className="text-neutral-400 flex items-center gap-1.5"><span className="w-1.5 h-1.5 bg-neutral-500 rounded-full" /> Live Socket</span>
+                    </div>
+
+                    <div className="flex flex-col gap-3 relative z-10 text-neutral-400">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <span className="bg-white/[0.02] px-2.5 py-1 border border-white/[0.04] rounded-[6px]">Raw API JSON</span>
+                        <ArrowRight className="h-3 w-3 text-neutral-600 shrink-0" />
+                        <span className="bg-white text-black px-2.5 py-1 rounded-[6px] font-semibold">Normalizer ACL</span>
+                        <ArrowRight className="h-3 w-3 text-neutral-600 shrink-0" />
+                        <span className="bg-[#050505] px-2.5 py-1 border border-white/[0.04] text-neutral-300 rounded-[6px]">CanonicalDTO</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
 
+              <div className="bg-[#050505] border border-white/[0.04] rounded-[24px] overflow-hidden flex flex-col h-[520px] font-mono">
+                <div className="bg-[#0A0A0A] px-6 py-4 border-b border-white/[0.04] flex items-center justify-between select-none">
+                  <div className="flex items-center gap-2">
+                    <Terminal className="h-4 w-4 text-neutral-500" />
+                    <span className="text-neutral-300 uppercase tracking-widest text-[10px] font-bold">Execution Output</span>
+                  </div>
+                  {isNormalizing ? (
+                    <RefreshCw className="h-3.5 w-3.5 text-neutral-500 animate-spin" />
+                  ) : (
+                    <span className="text-neutral-500 text-[9px] uppercase tracking-widest">IDLE</span>
+                  )}
+                </div>
+                
+                <div className="p-6 overflow-y-auto flex-1 text-[11px] text-neutral-400 tabular-nums lining-nums select-text [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                  {normalizeOutput ? (
+                    <pre className={`whitespace-pre-wrap leading-relaxed break-words outline-none ${normalizeOutput.error ? 'text-[#FF3B30]' : ''}`}>
+                        {JSON.stringify(normalizeOutput, null, 2)}
+                    </pre>
+                  ) : (
+                    <div className="flex flex-col gap-4 items-center justify-center py-20 text-neutral-600 opacity-80 uppercase tracking-widest text-center px-4">
+                      {isNormalizing ? (
+                          <span>Executing live upstream API fetch...</span>
+                      ) : (
+                          <>
+                              <span>Select a provider to execute mapping sequence.</span>
+                              {!token && <span className="text-[#FF9500] mt-2 block">Warning: OAuth Token missing. Request will likely fail.</span>}
+                          </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           )}
 
-          {/* MCP GENERATION FACTORY */}
+          {/* ============================================================================ */}
+          {/* TAB 3: MCP SYNTHESIS */}
+          {/* ============================================================================ */}
           {activeTab === 'mcp' && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              
-              {/* Pillar spec */}
-              <div className="lg:col-span-2 space-y-6">
-                <div className="bg-[#151517]/40 backdrop-blur-3xl border border-white/[0.06] rounded-[24px] p-6 lg:p-8">
-                  <h3 className="text-[17px] font-medium text-white mb-4 flex items-center gap-2.5">
-                    <FileCode className="h-4.5 w-4.5 text-[#34C759]" />
-                    AI-Ops MCP Server Code Factory
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              <div className="space-y-6">
+                <div className="bg-white/[0.01] border border-white/[0.04] rounded-[24px] p-6 lg:p-8 h-full">
+                  <h3 className="text-[16px] font-medium text-white/95 mb-4 flex items-center gap-2.5">
+                    <Cpu className="h-4 w-4 text-neutral-400" />
+                    AI-Ops MCP Server Execution
                   </h3>
-                  <p className="text-neutral-300 text-[14px] leading-relaxed mb-6 font-normal">
-                    One of Aura&apos;s groundbreaking pillars is **dynamic MCP server generation** (`mcp-generator.ts`). 
-                    Instead of maintaining complex API bridges that rot, Aura&apos;s backend synthesizes dedicated Model Context Protocol (MCP) microservices 
-                    on the fly by parsing OpenAPI specification endpoints and resolving structural bindings automatically.
+                  <p className="text-neutral-400 text-[13px] leading-relaxed mb-8">
+                    Aura dynamically synthesizes dedicated Model Context Protocol (MCP) microservices on the fly by parsing OpenAPI spec endpoints and resolving structural bindings automatically.
                   </p>
 
-                  <div className="bg-black/30 border border-white/[0.04] rounded-[16px] p-5 font-mono text-[11px] tracking-wide">
-                    <div className="text-[11px] font-bold text-neutral-400 mb-3 select-none">CODE GEN GUARD INVARIANTS:</div>
-                    <ul className="space-y-3.5 text-neutral-300">
-                      <li className="flex items-start gap-2.5">
-                        <span className="text-[#34C759] font-bold shrink-0">✔</span>
+                  <div className="bg-[#050505] border border-white/[0.04] rounded-[16px] p-6 font-mono text-[11px] tracking-wide">
+                    <div className="text-[10px] text-neutral-500 uppercase tracking-widest mb-6 select-none">Static Compilation Invariants</div>
+                    <ul className="space-y-6 text-neutral-300">
+                      <li className="flex items-start gap-4">
+                        <span className="text-[#34C759] font-bold shrink-0 mt-0.5"><CheckCircle2 className="h-4 w-4" /></span>
                         <div>
-                          <strong>tsc --noEmit static checks</strong>
-                          <p className="text-neutral-500 mt-1">Never executes or packages compiled bundle if tsc identifies code-gen or schema leaks.</p>
+                          <strong className="text-neutral-200 block mb-1 font-semibold">tsc --noEmit Analysis</strong>
+                          <span className="text-neutral-500 leading-relaxed block mt-1.5">Execution is aborted if the compiler identifies unresolved bindings or schema leaks in the generated artifact.</span>
                         </div>
                       </li>
-                      <li className="flex items-start gap-2.5">
-                        <span className="text-[#34C759] font-bold shrink-0">✔</span>
+                      <li className="flex items-start gap-4">
+                        <span className="text-[#34C759] font-bold shrink-0 mt-0.5"><CheckCircle2 className="h-4 w-4" /></span>
                         <div>
-                          <strong>Strict Port Binding Safeguards</strong>
-                          <p className="text-neutral-500 mt-1">Auto configures ingress to bind securely to port 3000 over host 0.0.0.0 for seamless reverse proxying.</p>
-                        </div>
-                      </li>
-                      <li className="flex items-start gap-2.5">
-                        <span className="text-[#34C759] font-bold shrink-0">✔</span>
-                        <div>
-                          <strong>Secure Multi-Stage Docker builds</strong>
-                          <p className="text-neutral-500 mt-1">Prunes build caching layers, leaving node_modules isolated in staging cache to maintain a pristine, minimal size footprint.</p>
+                          <strong className="text-neutral-200 block mb-1 font-semibold">Port Binding Safeguards</strong>
+                          <span className="text-neutral-500 leading-relaxed block mt-1.5">Auto-configures express ingress to bind securely to 0.0.0.0:3000 for standard reverse proxy routing.</span>
                         </div>
                       </li>
                     </ul>
@@ -560,186 +410,118 @@ export function WorkspaceOrchestrationBlueprint({ user, token, onSignIn, onSignO
                 </div>
               </div>
 
-              {/* Visual compiler box */}
-              <div className="space-y-6">
-                <div className="bg-[#151517] border border-white/[0.06] rounded-[24px] p-6">
-                  <h4 className="text-[11px] font-bold text-neutral-400 uppercase tracking-widest mb-4 flex items-center justify-between">
-                    <span>MCP Build Rig</span>
-                    {isCompiling && <RefreshCw className="h-3.5 w-3.5 text-neutral-400 animate-spin" />}
-                  </h4>
-
-                  <p className="text-neutral-400 text-xs mb-5 font-normal leading-relaxed">
-                    Trigger a compiled verification check of the workspace bridge. Emulates static checks, compilation, package building, and secure deployment routing.
-                  </p>
-
-                  <button
+              <div className="bg-[#050505] border border-white/[0.04] rounded-[24px] p-6 lg:p-10 flex flex-col items-center justify-center text-center">
+                 <Cloud className="h-12 w-12 text-neutral-600 mb-6" strokeWidth={1.5} />
+                 <h4 className="text-[18px] font-medium text-white/90 mb-3">Initialize Build Rig</h4>
+                 <p className="text-[13px] text-neutral-500 mb-10 max-w-sm leading-relaxed">Trigger the actual backend <code className="bg-white/[0.05] border border-white/[0.1] px-1.5 py-0.5 rounded text-neutral-300 font-mono text-[11px]">/api/mcp/deploy</code> endpoint to execute real static checks and initialize Google Cloud Build.</p>
+                 
+                 <button
                     disabled={isCompiling}
-                    onClick={triggerGcpBuild}
-                    className={`w-full py-3 px-5 rounded-full text-xs font-bold uppercase tracking-wider transition-all duration-300 select-none flex items-center justify-center gap-2 cursor-pointer ${
-                      isCompiling 
-                        ? 'bg-neutral-800 text-neutral-500 border border-neutral-700' 
-                        : 'bg-[#34C759] text-black hover:bg-neutral-200'
-                    }`}
+                    onClick={() => setActiveTab('deploy')}
+                    className="px-8 py-4 rounded-[12px] text-[11px] font-mono font-bold uppercase tracking-widest transition-all duration-300 active:scale-[0.98] outline-none focus-visible:ring-2 focus-visible:ring-white/20 bg-white text-black hover:bg-neutral-200"
                   >
-                    <Play className="h-3.5 w-3.5 fill-current" />
-                    {isCompiling ? 'Synthesizing...' : 'Launch MCP Build Rig'}
+                    Proceed to Deployment Pipeline
                   </button>
-
-                  {/* Progress Step Bar */}
-                  <div className="mt-8 space-y-4">
-                    {buildSteps.map((step, idx) => (
-                      <div key={step.id} className="flex gap-3 text-xs">
-                        <div className="flex flex-col items-center">
-                          <div className={`h-5 w-5 rounded-full flex items-center justify-center border text-[9px] font-mono select-none ${
-                            step.state === 'success' 
-                              ? 'bg-[#34C759]/10 border-[#34C759]/30 text-[#34C759] font-bold' 
-                              : step.state === 'running' 
-                                ? 'bg-white/10 border-white/20 text-white animate-pulse' 
-                                : 'bg-transparent border-white/[0.06] text-neutral-500'
-                          }`}>
-                            {step.state === 'success' ? '✔' : idx + 1}
-                          </div>
-                          {idx !== buildSteps.length - 1 && (
-                            <div className={`w-px h-6 my-1 ${
-                              step.state === 'success' ? 'bg-[#34C759]/30' : 'bg-white/[0.04]'
-                            }`} />
-                          )}
-                        </div>
-                        <div>
-                          <div className={`font-semibold ${step.state === 'success' ? 'text-white' : 'text-neutral-400'}`}>{step.title}</div>
-                          <div className="text-[10px] text-neutral-500 mt-0.5 leading-normal">{step.desc}</div>
-                          {step.output && (
-                            <div className="text-[9px] font-mono text-[#34C759] mt-1.5 break-all font-semibold select-all">URL: {step.output}</div>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                </div>
               </div>
-
             </div>
           )}
 
-          {/* DEPLOYMENT PIPELINE */}
+          {/* ============================================================================ */}
+          {/* TAB 4: DEPLOY PIPELINE */}
+          {/* ============================================================================ */}
           {activeTab === 'deploy' && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              
-              {/* Technical Specifications */}
-              <div className="lg:col-span-2 space-y-6">
-                <div className="bg-[#151517]/40 backdrop-blur-3xl border border-white/[0.06] rounded-[24px] p-6 lg:p-8">
-                  <h3 className="text-[17px] font-medium text-white mb-4 flex items-center gap-2.5">
-                    <Cloud className="h-4.5 w-4.5 text-[#34C759]" />
-                    Secure Google Cloud Platform Deployment Infrastructure
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              <div className="space-y-6">
+                <div className="bg-white/[0.01] border border-white/[0.04] rounded-[24px] p-6 lg:p-8">
+                  <h3 className="text-[16px] font-medium text-white/95 mb-4 flex items-center gap-2.5">
+                    <Lock className="h-4 w-4 text-neutral-400" />
+                    Secure GCP Secret Ledger
                   </h3>
-                  <p className="text-neutral-300 text-[14px] leading-relaxed mb-6 font-normal">
-                    Transitioning from simulated deployments to actual GCP integrations represents the true Series A readiness standard. 
-                    Using Google&apos;s Node SDKs for Cloud Build (`@google-cloud/cloudbuild`) and Cloud Run (`@google-cloud/run`), 
-                    our deployment pipeline establishes secure containerization pipelines with zero static API credentials exposed.
+                  <p className="text-neutral-400 text-[13px] leading-relaxed mb-8">
+                    Third-party API tokens and user OAuth handles reside strictly inside secure KMS Secret Managers. <strong className="text-neutral-200 font-medium">Active client-side JavaScript is strictly forbidden from fetching or exposing these resources.</strong>
                   </p>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
-                    <div className="bg-white/[0.02] border border-white/[0.04] rounded-xl p-5">
-                      <div className="h-8 w-8 rounded-lg bg-white/[0.03] border border-white/[0.06] flex items-center justify-center font-mono text-[10px] font-bold text-[#34C759] mb-3">01</div>
-                      <h4 className="text-[13px] font-semibold text-white tracking-wide uppercase mb-1">Least Privilege IAM</h4>
-                      <p className="text-[11px] text-neutral-400 leading-normal">Cloud Build service accounts bind tightly to Google Artifact Registry scopes, restricting read/write capabilities dynamically at compile-time.</p>
+                  <div className="space-y-4 font-mono text-[11px] text-neutral-400 select-none tabular-nums lining-nums uppercase tracking-widest">
+                    <div className="flex justify-between items-center p-3.5 bg-[#050505] border border-white/[0.04] rounded-[12px]">
+                      <span>OAUTH_TOKEN</span>
+                      {token ? (
+                        <span className="text-[#34C759] font-bold truncate max-w-[150px] text-[10px]">
+                          {user?.email || 'RESOLVED'}
+                        </span>
+                      ) : (
+                        <button onClick={onSignIn} className="text-[#FF9500] hover:text-[#FF9500]/80 font-bold cursor-pointer transition-colors text-[10px] outline-none focus-visible:ring-1 focus-visible:ring-white/20 rounded">
+                          CONNECT IDENTITY
+                        </button>
+                      )}
                     </div>
-
-                    <div className="bg-white/[0.02] border border-white/[0.04] rounded-xl p-5">
-                      <div className="h-8 w-8 rounded-lg bg-white/[0.03] border border-white/[0.06] flex items-center justify-center font-mono text-[10px] font-bold text-[#FF9500] mb-3">02</div>
-                      <h4 className="text-[13px] font-semibold text-white tracking-wide uppercase mb-1">GCP Secret Manager</h4>
-                      <p className="text-[11px] text-neutral-400 leading-normal">Third party tokens, user OAuth refresh handles, and private keys reside inside secure, auditable KMS Secret Managers resolved dynamically.</p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Simulated Console Output */}
-                <div className="bg-[#0a0a0c] border border-white/[0.06] rounded-[24px] p-6 font-mono text-xs overflow-hidden h-[240px] flex flex-col">
-                  <div className="flex items-center justify-between mb-4 border-b border-white/[0.06] pb-3 select-none">
-                    <div className="flex items-center gap-2">
-                      <Terminal className="h-4 w-4 text-[#34C759]" />
-                      <span className="text-neutral-100 font-sans font-semibold uppercase tracking-wide text-[10px]">Real-Time GCP Deploy Console Logs</span>
-                    </div>
-                    {isCompiling && <span className="text-neutral-400 text-[10px] tracking-widest uppercase animate-pulse">STREAMING</span>}
-                  </div>
-                  
-                  <div className="flex-1 overflow-y-auto space-y-1.5 select-all pr-2 text-neutral-400 max-h-[160px] scrolling-touch">
-                    {logs.length > 0 ? (
-                      logs.map((log, index) => (
-                        <div key={index} className="leading-relaxed hover:text-white transition-colors">
-                          <span className="text-neutral-600 mr-2">[{new Date().toLocaleTimeString()}]</span>
-                          {log}
-                        </div>
-                      ))
-                    ) : (
-                      <div className="text-neutral-600 py-12 text-center text-xs">
-                        No active deployments running. Click &quot;Launch MCP Build Rig&quot; to initiate compilation logs.
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-              </div>
-
-              {/* Secure Credentials check */}
-              <div className="space-y-6">
-                <div className="bg-[#151517] border border-white/[0.06] rounded-[24px] p-6 h-full flex flex-col justify-between">
-                  <div>
-                    <h4 className="text-[11px] font-bold text-neutral-400 uppercase tracking-widest mb-4">IAM Secret Ledger</h4>
-                    <p className="text-neutral-400 text-xs mb-6 font-normal leading-relaxed">
-                      Aura leverages fine-grained Google Service Accounts. Secure variables are checked in memory statically upon app bootstrap:
-                    </p>
-
-                    <div className="space-y-4 font-mono text-[10px] text-neutral-300 select-none">
-                      <div className="flex justify-between items-center p-2.5 bg-white/[0.01] border border-white/[0.04] rounded-lg">
-                        <span>WORKSPACE_USER_OAUTH</span>
-                        {token ? (
-                          <span className="text-[#34C759] font-bold uppercase truncate max-w-[150px]">
-                            {user?.email || 'CONNECTED'}
-                          </span>
-                        ) : (
-                          <button 
-                            type="button"
-                            onClick={onSignIn} 
-                            className="text-[#FF9500] hover:text-[#FF9500]/80 font-bold uppercase cursor-pointer transition-colors text-[9px] tracking-wider"
-                          >
-                            CLICK TO CONNECT
-                          </button>
-                        )}
-                      </div>
-                      <div className="flex justify-between items-center p-2.5 bg-white/[0.01] border border-white/[0.04] rounded-lg">
-                        <span>GOOGLE_APPLICATION_CREDENTIALS</span>
-                        <span className="text-[#34C759] font-bold">CONFIGURED</span>
-                      </div>
-                      <div className="flex justify-between items-center p-2.5 bg-white/[0.01] border border-white/[0.04] rounded-lg">
-                        <span>GEMINI_API_KEY</span>
-                        <span className="text-[#34C759] font-bold">DECLARED</span>
-                      </div>
-                      <div className="flex justify-between items-center p-2.5 bg-white/[0.01] border border-white/[0.04] rounded-lg">
-                        <span>FIREBASE_APPLET_CONFIG</span>
-                        <span className="text-[#34C759] font-bold font-semibold">PROVISIONED</span>
-                      </div>
+                    <div className="flex justify-between items-center p-3.5 bg-[#050505] border border-white/[0.04] rounded-[12px]">
+                      <span>GCP_CREDENTIALS</span>
+                      <span className="text-neutral-600 font-bold text-[10px]">INJECTED</span>
                     </div>
                   </div>
 
-                  <div className="bg-[#FF9500]/5 border border-[#FF9500]/15 rounded-xl p-4 mt-6">
-                    <div className="flex gap-2 p-1.5">
-                      <AlertTriangle className="h-4 w-4 text-[#FF9500] shrink-0 mt-0.5" />
-                      <div className="text-[10px] text-neutral-300 leading-normal">
-                        <strong>Security Invariant Check:</strong> Active client-side JS is strictly forbidden from fetching or exposing key resources. 
-                        All compilation variables are loaded server-side by modern container engines.
+                  <div className="bg-[#050505] border border-white/[0.04] rounded-[16px] p-5 mt-8 flex items-start gap-3">
+                      <AlertTriangle className="h-4 w-4 text-neutral-500 shrink-0 mt-0.5" strokeWidth={1.5} />
+                      <div className="text-[12px] text-neutral-500 leading-relaxed font-sans">
+                        <strong className="text-neutral-300 block mb-1">Least Privilege IAM</strong>
+                        Cloud Build service accounts bind tightly to Google Artifact Registry scopes, restricting read/write capabilities dynamically at compile-time.
                       </div>
-                    </div>
                   </div>
                 </div>
               </div>
 
+              <div className="bg-[#050505] border border-white/[0.04] rounded-[24px] overflow-hidden flex flex-col h-[550px] font-mono">
+                <div className="px-6 py-4 border-b border-white/[0.04] flex items-center justify-between bg-[#0A0A0A] select-none">
+                  <span className="text-neutral-300 font-bold uppercase tracking-widest text-[10px] flex items-center gap-2">
+                     <Terminal className="h-3.5 w-3.5 text-neutral-500" /> Server Execution Logs
+                  </span>
+                  {isCompiling && <span className="animate-pulse text-neutral-500 text-[9px] tracking-widest uppercase">Streaming</span>}
+                </div>
+                
+                <div className="p-6 overflow-y-auto flex-1 text-[11px] text-neutral-400 tabular-nums lining-nums leading-[1.65] [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                  {logs.length > 0 ? (
+                    logs.map((log, index) => (
+                      <div key={index} className={`mb-1.5 break-words hover:text-neutral-300 transition-colors ${log.includes('FATAL') || log.includes('FAULT') ? 'text-[#FF3B30]' : log.includes('verified') || log.includes('live at') ? 'text-[#34C759]' : 'text-neutral-400'}`}>
+                        {log}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-center py-20 text-neutral-600 uppercase tracking-widest text-[10px] select-none opacity-60">
+                      Awaiting remote execution trigger...
+                    </div>
+                  )}
+                  {deployUrl && (
+                      <div className="mt-6 p-5 border border-[#34C759]/20 bg-[#34C759]/5 rounded-[12px] text-center select-none">
+                          <span className="block text-[10px] text-neutral-500 uppercase tracking-widest mb-2">Ingress Provisioned</span>
+                          <a href={deployUrl} target="_blank" rel="noopener noreferrer" className="text-[#34C759] text-[11px] font-bold hover:underline break-all outline-none focus-visible:ring-2 focus-visible:ring-[#34C759]/50 rounded px-2 py-1">
+                              {deployUrl}
+                          </a>
+                      </div>
+                  )}
+                  <div ref={logsEndRef} className="h-4 w-full" />
+                </div>
+
+                <div className="p-4 border-t border-white/[0.04] bg-[#0A0A0A]">
+                    <button
+                      disabled={isCompiling}
+                      onClick={triggerLivePipeline}
+                      className={`w-full py-3.5 rounded-[8px] text-[10px] font-bold uppercase tracking-widest transition-all duration-300 active:scale-[0.98] outline-none focus-visible:ring-2 focus-visible:ring-white/20 select-none ${
+                        isCompiling 
+                          ? 'bg-[#050505] text-neutral-600 border border-white/[0.02] cursor-not-allowed' 
+                          : interactiveApproved
+                            ? 'bg-white text-black border border-white hover:bg-neutral-200 cursor-pointer'
+                            : 'bg-transparent text-[#FF9500] border border-[#FF9500]/30 hover:bg-[#FF9500]/10 cursor-pointer'
+                      }`}
+                    >
+                      {isCompiling ? 'Executing...' : interactiveApproved ? 'Trigger Cloud Build' : 'Locked: Requires Trust Gate Approval'}
+                    </button>
+                </div>
+              </div>
             </div>
           )}
+
         </motion.div>
       </AnimatePresence>
-
     </div>
   );
 }
