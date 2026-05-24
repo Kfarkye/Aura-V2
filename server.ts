@@ -15,7 +15,7 @@ import { OAuth2Client } from 'google-auth-library';
 import { handleWinProbabilityQuery } from './src/server/win-probability-handler';
 import { handlePlayerPropQuery } from './src/server/player-prop-handler';
 import { generateEditorialFeed } from './src/server/cron-feed-generator';
-import { handleWorkspaceQuery, getGmailEmails, getCalendarEvents, getDriveFiles, getGoogleTasks } from './src/server/workspace-handler';
+import { handleWorkspaceQuery, getGmailEmails, getCalendarEvents, getDriveFiles, getGoogleTasks, containsWorkspaceMutationIntent } from './src/server/workspace-handler';
 import { generateAndDeployMCP } from './src/server/mcp-generator';
 
 let firebaseConfig: any;
@@ -879,12 +879,17 @@ Current Date Context: ${new Date().toISOString().split('T')[0].replace(/-/g, '')
 
   app.post('/api/workspace/normalize', async (req, res) => {
       try {
+          const body = (req.body && typeof req.body === 'object') ? req.body : {};
+          if (containsWorkspaceMutationIntent(body)) {
+              return res.status(403).json({ error: 'WORKSPACE_WRITE_ACTIONS_DISABLED' });
+          }
+
           const authHeader = req.headers.authorization;
           if (!authHeader || !authHeader.startsWith('Bearer ')) {
               return res.status(401).json({ error: 'UNAUTHORIZED: Google Workspace OAuth token required.' });
           }
           const token = authHeader.substring(7);
-          const { source } = req.body;
+          const { source } = body;
           if (!source) {
               return res.status(400).json({ error: 'BAD_REQUEST: Missing source parameter.' });
           }

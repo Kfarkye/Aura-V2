@@ -20,6 +20,28 @@ import { AuraArtifact } from '../types/aura';
 
 const LOG_PREFIX = '[WORKSPACE:INFO]';
 const NETWORK_LIMIT_MS = 6000;
+const WORKSPACE_MUTATION_KEYWORDS = [
+    'create',
+    'update',
+    'delete',
+    'write',
+    'mutate',
+    'modify',
+    'insert',
+    'patch',
+    'send',
+    'compose',
+    'draft',
+    'messages.send',
+    'drafts.create',
+    'events.insert',
+    'events.update',
+    'events.patch',
+    'tasks.insert',
+    'tasks.update',
+    'files.create',
+    'files.update'
+];
 
 // ============================================================================
 // 1. Connection and String Helpers
@@ -63,6 +85,25 @@ function decodeUrlSafeBase64(data?: string | null): string {
     } catch {
         return '[Unable to read text structure]';
     }
+}
+
+function stringHasWorkspaceMutationIntent(value: string): boolean {
+    const normalized = value.toLowerCase();
+    return WORKSPACE_MUTATION_KEYWORDS.some((keyword) => normalized.includes(keyword));
+}
+
+export function containsWorkspaceMutationIntent(input: unknown): boolean {
+    if (!input) return false;
+    if (typeof input === 'string') return stringHasWorkspaceMutationIntent(input);
+    if (typeof input === 'number' || typeof input === 'boolean') return false;
+    if (Array.isArray(input)) return input.some((item) => containsWorkspaceMutationIntent(item));
+    if (typeof input === 'object') {
+        return Object.entries(input as Record<string, unknown>).some(([key, value]) => {
+            if (stringHasWorkspaceMutationIntent(key)) return true;
+            return containsWorkspaceMutationIntent(value);
+        });
+    }
+    return false;
 }
 
 // ============================================================================
@@ -270,6 +311,15 @@ export async function handleWorkspaceQuery(domain: string, queryFilter?: string,
              type: 'WORK_ARTIFACT',
              resolution_state: 'CONVERSATIONAL',
              context_summary: `### 🔒 Sign-In Required\n\nTo view and query live message entries and records, please sign in using the **Connect** button above.\n\n*Aura adheres to simple zero-simulation standards: no fake items or synthetic mock entries will be generated while unauthenticated.*`
+        };
+    }
+
+    if (containsWorkspaceMutationIntent(queryFilter || '')) {
+        return {
+             id: `work_write_block_${Date.now()}`,
+             type: 'WORK_ARTIFACT',
+             resolution_state: 'GROUNDING_FAULT',
+             context_summary: `### 🔐 Workspace Write Blocked\n\nWorkspace write/mutate actions are disabled in this environment. Read-only retrieval remains available.`
         };
     }
 
