@@ -1,0 +1,94 @@
+@import "tailwindcss";
+
+@theme {
+  /* Pristine System Sans-Serif */
+  --font-sans: "SF Pro Display", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  
+  /* FIXED: Pointed to actual editorial serif fonts (New York, Iowan, Charter) */
+  --font-serif: "New York", "Iowan Old Style", "Apple Garamond", "Baskerville", "Charter", "Georgia", ui-serif, serif;
+  
+  /* Precision Monospace for Data Arrays & Tickers */
+  --font-mono: "SF Mono", "SFMono-Regular", ui-monospace, Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* Premium Shimmer and Float Keyframes */
+  --animate-shimmer: shimmer 1.8s infinite linear;
+}
+
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@layer base {
+  :root {
+    /* Instructs the browser engine to natively optimize form inputs and default UI for dark mode */
+    color-scheme: dark;
+  }
+
+  html {
+    /* Prevents the elastic "rubber band" bouncing effect on Mac/iOS trackpads */
+    overscroll-behavior-y: none;
+    /* Prevents the cheap blue tap-highlight flash on mobile */
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    background-color: #000000;
+    color: #EBEBF5; /* Apple's precise standard for dark mode primary text */
+    
+    /* Absolute Sub-pixel Text Precision */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    
+    /* Forces advanced kerning pairs and ligatures for an editorial reading experience */
+    text-rendering: optimizeLegibility;
+  }
+
+  /* CRITICAL FOR QUANT UI: Forces numbers to take up identical horizontal space. 
+     Prevents odds, tickets, and capital from "jiggling" horizontally in tables. */
+  table, 
+  pre, 
+  code, 
+  .tabular-nums {
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+
+  /* Institutional-Grade Selection: Subdued neutral blend rather than default glaring blue */
+  ::selection {
+    background-color: rgba(255, 255, 255, 0.15);
+    color: #ffffff;
+  }
+  ::-moz-selection {
+    background-color: rgba(255, 255, 255, 0.15);
+    color: #ffffff;
+  }
+
+  /* Minimalist Native-App Scrollbars */
+  ::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: rgba(255, 255, 255, 0.15);
+    border-radius: 9999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(255, 255, 255, 0.3);
+  }
+
+  /* Uniform, elegant focus rings across all interactive elements */
+  *:focus-visible {
+    outline: 2px solid rgba(255, 255, 255, 0.2);
+    outline-offset: 2px;
+  }
+}
