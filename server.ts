@@ -2256,10 +2256,34 @@ For active sports traders, the discrepancy between the underlying implied perfor
   app.post('/api/chat', async (req, res) => {
       try {
           const { message, history, image, imageMime, domain, client_context } = req.body;
-          if (!message && !image) return res.status(400).json({ error: "Message or image required" });
+          
+          // 🛡️ RUNTIME TYPE GUARD: Normalize query and prevent [object Object] leaks
+          let cleanQuery = '';
+          if (typeof message === 'string') {
+            cleanQuery = message.trim();
+          } else if (message && typeof message === 'object') {
+            cleanQuery = (message.text || message.query || message.value || '').trim();
+          }
+
+          if (!cleanQuery && image) {
+            cleanQuery = '(Image asset analysis)';
+          }
+
+          if (!cleanQuery || cleanQuery === '[object Object]') {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.setHeader('Cache-Control', 'no-cache');
+            res.setHeader('Connection', 'keep-alive');
+            res.write(`data: ${JSON.stringify({ 
+              type: 'error', 
+              text: 'System Error: Input query was corrupted or serialized as [object Object].' 
+            })}\n\n`);
+            res.end();
+            return;
+          }
+
           const authHeader = req.header('authorization') || req.header('x-serverless-authorization');
           const token = authHeader ? authHeader.replace(/^Bearer\s+/i, '').trim() : undefined;
-          const logMsg = message ? (message.length > 100 ? message.substring(0, 100) + '...' : message) : '(Image asset analysis)';
+          const logMsg = cleanQuery.length > 100 ? cleanQuery.substring(0, 100) + '...' : cleanQuery;
           console.log(`[AURA] Processing intent REST (SSE): "${logMsg}", client-locked domain: "${domain || 'none'}"`);
           
           res.setHeader('Content-Type', 'text/event-stream');
@@ -2271,7 +2295,7 @@ For active sports traders, the discrepancy between the underlying implied perfor
               depth: 0,
               maxDepth: 3,
               visitedAgents: [],
-              originalQuery: message,
+              originalQuery: cleanQuery,
               accessToken: token,
               history,
               image,
@@ -2284,7 +2308,7 @@ For active sports traders, the discrepancy between the underlying implied perfor
               }
           };
 
-          const agentResponse = await registryRouter.route(message, routeCtx);
+          const agentResponse = await registryRouter.route(cleanQuery, routeCtx);
           let emitArtifacts: AuraArtifact[] = [];
           
           if (agentResponse.success && agentResponse.output) {
