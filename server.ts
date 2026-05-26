@@ -2216,12 +2216,12 @@ For active sports traders, the discrepancy between the underlying implied perfor
 
   app.post('/api/chat', async (req, res) => {
       try {
-          const { message, history, image, imageMime, client_context } = req.body;
+          const { message, history, image, imageMime, domain, client_context } = req.body;
           if (!message && !image) return res.status(400).json({ error: "Message or image required" });
           const authHeader = req.header('authorization') || req.header('x-serverless-authorization');
           const token = authHeader ? authHeader.replace(/^Bearer\s+/i, '').trim() : undefined;
           const logMsg = message ? (message.length > 100 ? message.substring(0, 100) + '...' : message) : '(Image asset analysis)';
-          console.log(`[AURA] Processing intent REST (SSE): "${logMsg}"`);
+          console.log(`[AURA] Processing intent REST (SSE): "${logMsg}", client-locked domain: "${domain || 'none'}"`);
           
           res.setHeader('Content-Type', 'text/event-stream');
           res.setHeader('Cache-Control', 'no-cache');
@@ -2238,6 +2238,7 @@ For active sports traders, the discrepancy between the underlying implied perfor
               image,
               imageMime,
               timezone,
+              domain,
               onToken: (tokenText: string) => {
                   res.write(`data: ${JSON.stringify({ type: 'chunk', text: tokenText })}\n\n`);
               }

@@ -8,6 +8,7 @@ export interface RouteContext {
   image?: string;
   imageMime?: string;
   onToken?: (token: string) => void;
+  domain?: string;
 }
 
 export interface AgentResponse {

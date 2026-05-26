@@ -98,7 +98,7 @@ export class RegistryRouter {
     if (enrichedContext.depth >= enrichedContext.maxDepth) {
       console.warn(`[Registry] Circuit breaker tripped! Max routing depth (${enrichedContext.maxDepth}) reached.`);
       cleanupTimer();
-      return this.fallbackRoute(query, "Max routing depth exceeded. System prevented a routing loop.", enrichedContext);
+      return await this.fallbackRoute(query, "Max routing depth exceeded. System prevented a routing loop.", enrichedContext);
     }
 
     // 1.5 PRE-PROCESS & DIRECT ROUTE
@@ -153,7 +153,7 @@ export class RegistryRouter {
     if (!bestAgent || highestConfidence < CONFIDENCE_THRESHOLD) {
       console.log(`[Registry] Low confidence score (${highestConfidence || 'N/A'}). Routing to fallback.`);
       cleanupTimer();
-      return this.fallbackRoute(query, "No agent met the confidence threshold.", enrichedContext);
+      return await this.fallbackRoute(query, "No agent met the confidence threshold.", enrichedContext);
     }
 
     // 4. EXECUTION
@@ -183,10 +183,97 @@ export class RegistryRouter {
     }
   }
 
-  private fallbackRoute(query: string, reason: string, context: RouteContext): AgentResponse {
-    return {
-      success: false,
-      output: `System fallback triggered: ${reason}`
-    };
+  private async fallbackRoute(
+    query: string,
+    reason: string,
+    context: RouteContext
+  ): Promise<AgentResponse> {
+    console.log(`[RegistryRouter] Fallback route triggered for query: "${query}". Reason: ${reason}`);
+
+    // Tier 3 fallback: Respect client-locked active tab domain
+    if (context.domain) {
+      let mappedAgentId: string | null = null;
+      const domainLower = context.domain.toLowerCase();
+      if (domainLower === 'sports' || domainLower === 'sports-agent') {
+        mappedAgentId = 'sports-agent';
+      } else if (domainLower === 'workspace' || domainLower === 'workspace-agent') {
+        mappedAgentId = 'workspace-agent';
+      } else if (domainLower === 'kalshi' || domainLower === 'markets' || domainLower === 'markets-agent') {
+        mappedAgentId = 'markets-agent';
+      } else if (domainLower === 'research' || domainLower === 'deep-research-agent') {
+        mappedAgentId = 'deep-research-agent';
+      }
+
+      if (mappedAgentId) {
+        const targetAgent = this.agents.get(mappedAgentId);
+        if (targetAgent) {
+          console.log(`[RegistryRouter] Low confidence score, but client context domain is locked to "${context.domain}". Fallback to agent: ${targetAgent.name}`);
+          const updatedContext: RouteContext = {
+            ...context,
+            depth: context.depth + 1,
+            visitedAgents: [...context.visitedAgents, targetAgent.id]
+          };
+          try {
+            return await targetAgent.handle(query, updatedContext);
+          } catch (err) {
+            console.error(`[RegistryRouter] Fallback execution failed on agent ${targetAgent.id}. Advancing to general conversational agent.`, err);
+          }
+        }
+      }
+    }
+
+    // Absolute fallback: General Conversational Agent using gemini-3.5-flash
+    console.log(`[RegistryRouter] Routing to general conversational agent.`);
+    try {
+      const { GoogleGenAI } = await import('@google/genai');
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        throw new Error("GEMINI_API_KEY environment variable is not defined.");
+      }
+      const ai = new GoogleGenAI({ apiKey });
+      const systemInstruction = `You are AURA, an elite, open-world agentic virtual assistant. The user is asking a general, technical, or conversational question that falls outside the specialized domains of sports analytics, markets/Kalshi forecasting, or Google Workspace queries. Answer their question with absolute precision, high clarity, and beautiful professional formatting. Maintain a helpful and brilliant technical analytical tone.`;
+
+      if (context.onToken) {
+        const responseStream = await ai.models.generateContentStream({
+          model: "gemini-3.5-flash",
+          contents: query,
+          config: {
+            systemInstruction,
+            temperature: 0.7
+          }
+        });
+
+        let fullText = "";
+        for await (const chunk of responseStream) {
+          if (chunk.text) {
+            fullText += chunk.text;
+            context.onToken(chunk.text);
+          }
+        }
+        return {
+          success: true,
+          output: fullText
+        };
+      } else {
+        const response = await ai.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: query,
+          config: {
+            systemInstruction,
+            temperature: 0.7
+          }
+        });
+        return {
+          success: true,
+          output: response.text || "I processed your request, but could not produce a text response."
+        };
+      }
+    } catch (e: any) {
+      console.error("[RegistryRouter] Error in general conversational agent fallback:", e);
+      return {
+        success: false,
+        output: `System fallback failed to execute conversational fallback: ${e.message || e}`
+      };
+    }
   }
 }
