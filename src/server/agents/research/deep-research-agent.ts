@@ -138,8 +138,9 @@ Write like a strategy consultant. Every claim needs a data point.`,
       const allGrounding = [...webGrounding, ...scholarGrounding, ...marketGrounding];
 
       // Sequential synthesis
+      // Sequential synthesis
       console.log("[DEEP-RESEARCH] Parallel searches complete. Starting synthesis...");
-      const synthesisResult = await ai.models.generateContent({
+      const responseStream = await ai.models.generateContentStream({
         model: MODEL,
         contents: `Query: ${query}
 
@@ -196,7 +197,19 @@ Write with authority, precision, and elite premium prose. Use clean, bold markdo
         }
       });
 
-      const report = synthesisResult.text || "Unable to synthesize report.";
+      let report = "";
+      for await (const chunk of responseStream) {
+        if (chunk.text) {
+          report += chunk.text;
+          if (context?.onToken) {
+            context.onToken(chunk.text);
+          }
+        }
+      }
+
+      if (!report) {
+        report = "Unable to synthesize report.";
+      }
 
       const artifact: AuraArtifact = {
         id: `research_${Date.now()}`,

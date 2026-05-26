@@ -2030,17 +2030,15 @@ For active sports traders, the discrepancy between the underlying implied perfor
       try {
           const { message, history, image, imageMime } = req.body;
           if (!message && !image) return res.status(400).json({ error: "Message or image required" });
-
           const authHeader = req.header('authorization') || req.header('x-serverless-authorization');
           const token = authHeader ? authHeader.replace(/^Bearer\s+/i, '').trim() : undefined;
-
           const logMsg = message ? (message.length > 100 ? message.substring(0, 100) + '...' : message) : '(Image asset analysis)';
           console.log(`[AURA] Processing intent REST (SSE): "${logMsg}"`);
           
           res.setHeader('Content-Type', 'text/event-stream');
           res.setHeader('Cache-Control', 'no-cache');
           res.setHeader('Connection', 'keep-alive');
-
+          
           const routeCtx = {
               depth: 0,
               maxDepth: 3,
@@ -2049,11 +2047,15 @@ For active sports traders, the discrepancy between the underlying implied perfor
               accessToken: token,
               history,
               image,
-              imageMime
+              imageMime,
+              onToken: (tokenText: string) => {
+                  res.write(`data: ${JSON.stringify({ type: 'chunk', text: tokenText })}\n\n`);
+              }
           };
-          const agentResponse = await registryRouter.route(message, routeCtx);
 
+          const agentResponse = await registryRouter.route(message, routeCtx);
           let emitArtifacts: AuraArtifact[] = [];
+          
           if (agentResponse.success && agentResponse.output) {
               if (Array.isArray(agentResponse.output)) {
                   emitArtifacts = agentResponse.output;

@@ -7,6 +7,7 @@ export interface RouteContext {
   history?: any[];
   image?: string;
   imageMime?: string;
+  onToken?: (token: string) => void;
 }
 
 export interface AgentResponse {

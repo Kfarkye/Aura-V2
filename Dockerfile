@@ -1,26 +1,28 @@
-# syntax=docker/dockerfile:1
-
-FROM node:20-bookworm-slim AS deps
+# Stage 1: Build native dependencies and bundle server
+FROM node:20-alpine AS builder
 WORKDIR /app
-COPY package.json package-lock.json ./
+
+# Install native compilation dependencies
+RUN apk add --no-cache python3 make g++ gcc libc-compat
+
+COPY package*.json ./
 RUN npm ci
 
-FROM node:20-bookworm-slim AS build
-WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
 
-FROM node:20-bookworm-slim AS runner
-ENV NODE_ENV=production
+# Stage 2: Minimal runtime execution layer
+FROM node:20-alpine AS runner
 WORKDIR /app
+ENV NODE_ENV=production
 
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+# Copy built assets and production runtime modules
+COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
 
-COPY --from=build /app/dist ./dist
-COPY --from=build /app/firebase-applet-config.json ./firebase-applet-config.json
+# Safe optional copy trick: copies the config if present, does not fail if absent
+COPY --from=builder /app/firebase-applet-config.json* ./
 
-USER node
 EXPOSE 3000
-CMD ["npm", "run", "start"]
+CMD ["node", "dist/server.cjs"]
