@@ -3,7 +3,8 @@ import { BrowserRouter, Routes, Route, Link, useParams, useLocation, useNavigate
 import { 
     CloudFog, AlertCircle, ArrowLeft, Activity, Copy, Check, ExternalLink, Sparkles, Globe,
     Search, Send, ShieldCheck, Calendar as CalendarIcon, Camera, X, TrendingUp, Zap, Link as LinkIcon, ChevronRight,
-    Bot, Filter, MessageSquare, PlusCircle, BookOpen, FileText, FileSpreadsheet, Lock, Clock, User as UserIcon // Renamed User to UserIcon to avoid conflict
+    Bot, Filter, MessageSquare, PlusCircle, BookOpen, FileText, FileSpreadsheet, Lock, Clock, User as UserIcon,
+    ArrowDown, Terminal
 } from 'lucide-react'; 
 import Markdown, { Components } from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -34,7 +35,7 @@ import { DriveDocumentViewer, DriveDocumentData } from './components/DriveDocume
 import { LiveQuantTerminal } from './components/LiveQuantTerminal';
 import { ScrollToTop } from './components/ScrollToTop';
 import { Navigation } from './components/Navigation';
-import { MessageCopyButton } from './components/MessageCopyButton';
+import { MessageCopyButton, CopyButton } from './components/MessageCopyButton';
 
 // ============================================================================
 // Core Interfaces
@@ -415,7 +416,7 @@ const FeedItem = React.memo(({ item }: { item: FeedCard }) => {
                                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); navigate(`/live/${item.live_game_id}`); }}
                                    className="hidden sm:flex items-center gap-2 bg-[#4285F4]/10 hover:bg-[#4285F4]/20 text-[#4285F4] border border-[#4285F4]/30 px-3 py-1.5 rounded-[8px] text-[10px] font-mono font-bold uppercase tracking-widest transition-colors shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-white/30 cursor-pointer"
                                >
-                                   <TerminalSquare className="w-3.5 h-3.5" /> Launch Matrix
+                                   <Terminal className="w-3.5 h-3.5" /> Launch Matrix
                                </button>
                            </div>
                        )}
@@ -529,8 +530,45 @@ function ChatInterface({
   const [isDragging, setIsDragging] = useState(false);
   const [viewedDocument, setViewedDocument] = useState<DriveDocumentData | null>(null); 
 
+  const chatContainerRef = useRef<HTMLElement>(null);
+  const [showScrollButton, setShowScrollButton] = useState(false);
+
+  // High-precision scroll tracking
+  const handleScroll = () => {
+    if (!chatContainerRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = chatContainerRef.current;
+    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+    setShowScrollButton(distanceFromBottom > 300);
+  };
+
+  const scrollToBottom = () => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTo({
+        top: chatContainerRef.current.scrollHeight,
+        behavior: 'smooth'
+      });
+    } else {
+      endRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
+
+  const getMessageText = (msg: AuraChatMessage) => {
+    if (msg.content) return msg.content;
+    const sysArt = msg.artifacts?.find(a => a.type === 'SYSTEM_MESSAGE' || a.type === 'WORK_ARTIFACT');
+    return sysArt?.context_summary || '';
+  };
+
   useEffect(() => {
-      const timer = setTimeout(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, 150);
+      const timer = setTimeout(() => {
+          if (chatContainerRef.current) {
+              chatContainerRef.current.scrollTo({
+                  top: chatContainerRef.current.scrollHeight,
+                  behavior: 'smooth'
+              });
+          } else {
+              endRef.current?.scrollIntoView({ behavior: 'smooth' });
+          }
+      }, 150);
       return () => clearTimeout(timer);
   }, [messages, loading]);
 
@@ -710,14 +748,11 @@ function ChatInterface({
       }
 
       if ((artifact.type === 'SYSTEM_MESSAGE' || artifact.type === 'WORK_ARTIFACT') && (artifact.resolution_state === 'CONVERSATIONAL' || artifact.resolution_state === 'LIVE_DATA')) {
-          if (artifact.type === 'DRIVE_DOC_ARTIFACT' && artifact.data) setViewedDocument(artifact.data);
-          else if (viewedDocument && artifact.type !== 'DRIVE_DOC_ARTIFACT') setViewedDocument(null); 
+          if ((artifact.type as any) === 'DRIVE_DOC_ARTIFACT' && artifact.data) setViewedDocument(artifact.data);
+          else if (viewedDocument && (artifact.type as any) !== 'DRIVE_DOC_ARTIFACT') setViewedDocument(null); 
 
           return (
               <div key={artifact.id} className="bg-transparent mb-6 flex flex-col w-full text-left font-sans group relative" aria-live="polite">
-                  <div className="absolute top-0 right-0 sm:-mr-12 opacity-0 group-hover:opacity-100 transition-opacity z-10 hidden sm:block">
-                      <MessageCopyButton text={artifact.context_summary || ''} />
-                  </div>
                   <div className="text-[16px] text-white/95 leading-[1.65] font-sans antialiased font-normal max-w-none">
                       <Markdown remarkPlugins={CHAT_REMARK_PLUGINS} components={CHAT_MARKDOWN_COMPONENTS}>
                           {artifact.context_summary || ''}
@@ -734,7 +769,11 @@ function ChatInterface({
   return (
     <>
       <SEO title="Aura | Substrate Interface" canonicalPath="/" />
-      <main className={`flex-1 overflow-y-auto p-4 sm:p-6 ${activeSubdomain === 'kalshi' ? 'max-w-6xl' : 'max-w-[760px]'} mx-auto w-full flex flex-col pt-6 pb-[180px] sm:pb-[200px] relative z-10 scroll-smooth [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden`}>
+      <main 
+        ref={chatContainerRef} 
+        onScroll={handleScroll} 
+        className={`flex-1 overflow-y-auto p-4 sm:p-6 ${activeSubdomain === 'kalshi' ? 'max-w-6xl' : 'max-w-[760px]'} mx-auto w-full flex flex-col pt-6 pb-[180px] sm:pb-[200px] relative z-10 scroll-smooth [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden`}
+      >
           
           {/* APP LAUNCHER */}
           {messages.length === 0 && !loading && (
@@ -797,17 +836,27 @@ function ChatInterface({
                                      </div>
                                  </div>
                              ) : (
-                                 <div className="w-full flex flex-col items-start max-w-full">
-                                     {/* Render raw conversational text from the model properly */}
-                                     {msg.content && !msg.artifacts?.length && (
-                                          <div className="text-[16px] text-white/95 leading-[1.65] font-sans antialiased font-normal max-w-none w-full mb-4">
-                                              <Markdown remarkPlugins={CHAT_REMARK_PLUGINS} components={CHAT_MARKDOWN_COMPONENTS}>
-                                                  {msg.content}
-                                              </Markdown>
+                                  <div className="w-full flex flex-col items-start max-w-full group relative">
+                                      {/* Render raw conversational text from the model properly */}
+                                      {msg.content && !msg.artifacts?.length && (
+                                           <div className="text-[16px] text-white/95 leading-[1.65] font-sans antialiased font-normal max-w-none w-full mb-4">
+                                               <Markdown remarkPlugins={CHAT_REMARK_PLUGINS} components={CHAT_MARKDOWN_COMPONENTS}>
+                                                   {msg.content}
+                                               </Markdown>
+                                           </div>
+                                      )}
+                                      
+                                      {msg.artifacts?.map(renderArtifact)}
+
+                                      {/* Elegant Copy-to-Clipboard Button at the footer of completed response */}
+                                      {!loading && getMessageText(msg) && (
+                                          <div className="w-full flex justify-end items-center mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                                              <span className="text-[9px] font-mono tracking-widest text-neutral-600 mr-2 uppercase select-none font-bold">
+                                                  Aura Substrate
+                                              </span>
+                                              <CopyButton textToCopy={getMessageText(msg)} />
                                           </div>
-                                     )}
-                                     
-                                     {msg.artifacts?.map(renderArtifact)}
+                                      )}
                                      
                                      {/* Contextual Action Chips */}
                                      {(idx === messages.length - 1 && !loading) && msg.artifacts?.some(a => a.type === 'BETTING_ANALYSIS' || a.type === 'SPORTS_ARTIFACT') && (
@@ -841,6 +890,26 @@ function ChatInterface({
       {/* Input Bar */}
       <div className="fixed bottom-0 w-full p-4 sm:p-6 pb-[calc(env(safe-area-inset-bottom,24px)+16px)] sm:pb-10 bg-gradient-to-t from-[#000000] via-[#000000]/95 to-transparent pointer-events-none z-50 transform-gpu">
          
+         {/* Floating Scroll-to-Bottom (Jump) Button */}
+         <div className="max-w-[760px] mx-auto relative h-0 w-full pointer-events-none">
+             <AnimatePresence>
+                 {showScrollButton && (
+                     <motion.button
+                         key="jump-to-bottom"
+                         initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                         animate={{ opacity: 1, y: 0, scale: 1 }}
+                         exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                         transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+                         onClick={scrollToBottom}
+                         className="absolute bottom-24 right-4 sm:right-8 z-50 flex h-10 w-10 items-center justify-center rounded-full border border-white/[0.08] bg-neutral-900/90 text-neutral-400 backdrop-blur-md shadow-lg hover:bg-neutral-800 hover:text-white active:scale-95 transition-all duration-200 transform-gpu focus:outline-none focus:ring-2 focus:ring-blue-500/40 pointer-events-auto cursor-pointer"
+                         aria-label="Jump to latest message"
+                     >
+                         <ArrowDown size={16} strokeWidth={2.5} className="animate-bounce" style={{ animationDuration: '2s' }} />
+                     </motion.button>
+                 )}
+             </AnimatePresence>
+         </div>
+
          {/* Contextual Suggestion Chips */}
          {messages.length === 0 && !loading && (
              <div className="max-w-[760px] mx-auto flex flex-wrap gap-2 mb-4 justify-center pointer-events-auto px-4">
@@ -1186,7 +1255,7 @@ export default function App() {
                 <Route path="/story/:id" element={<CanonicalEntityPage />} />
                 <Route path="/team/:slug" element={<TeamCanonicalPage />} />
                 <Route path="/category/:category" element={<CategoryHubPage />} />
-                <Route path="/live/:gameId" element={<LiveTerminalRoute token={token} />} />
+                <Route path="/live/:gameId" element={<LiveTerminalRoute />} />
             </Routes>
           </AuthContext.Provider>
       </div>

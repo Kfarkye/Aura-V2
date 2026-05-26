@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion'; // Using framer-motion for consistency
 import { 
-    Copy, Check, Search, AlertCircle, Eye, Mail, Calendar, FileText, Lock, Clock, ShieldCheck, Globe
+    Copy, Check, Search, AlertCircle, Eye, Mail, Calendar, FileText, Lock, Clock, ShieldCheck, Globe, Loader2
 } from 'lucide-react'; // Added more Lucide icons
 
 // ============================================================================

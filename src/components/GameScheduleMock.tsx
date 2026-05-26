@@ -407,7 +407,7 @@ export function SportsCalendar({ games: propGames, leagueContext }: { games?: Li
                       <h3 className="text-[12px] font-mono font-bold tracking-widest text-rose-500 uppercase mb-2">Schedule Unavailable</h3>
                       <p className="text-[14px] text-neutral-400 font-sans">{error}</p>
                       <button 
-                          onClick={fetchSchedule} 
+                          onClick={() => fetchSchedule()} 
                           className="mt-6 px-5 py-2.5 bg-blue-500 hover:bg-blue-600 text-white text-[12px] font-bold uppercase tracking-widest rounded-full transition-colors active:scale-95 focus-visible:ring-2 focus-visible:ring-blue-400/40"
                       >
                           Retry
