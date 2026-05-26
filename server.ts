@@ -22,10 +22,49 @@ import { handleWorkspaceQuery, getGmailEmails, getCalendarEvents, getDriveFiles,
 import { generateAndDeployMCP } from './src/server/mcp-generator';
 import liveStreamRouter from './src/server/routes/live-stream';
 import { RegistryRouter } from './src/server/agents/registry';
+import { SportsAgent } from './src/server/agents/sports/sports-agent';
+import { MarketsAgent } from './src/server/agents/markets/markets-agent';
+import { WorkspaceAgent } from './src/server/agents/workspace/workspace-agent';
+import { DeepResearchAgent } from './src/server/agents/research/deep-research-agent';
+import { GeneralAgent } from './src/server/agents/general/general-agent';
+import { CodingAgent } from './src/server/agents/coding-agent';
+import { LiveInGameAgent } from './src/server/agents/live-in-game-agent';
+import { YouTubeAgent } from './src/server/agents/media/youtube-agent';
+import { PortfolioSharpAgent } from './src/server/agents/portfolio-sharp-agent';
+import { LineShopperAgent } from './src/server/agents/line-shopper-agent';
+import { SentinelAgent } from './src/server/agents/sentinel-agent';
+import { ContrarianAgent } from './src/server/agents/contrarian-agent';
 import { CloudTasksClient } from '@google-cloud/tasks';
 import { db as adminDb } from './src/server/firebase-admin';
 
-const registryRouter = new RegistryRouter();
+const sportsAgent = new SportsAgent();
+const marketsAgent = new MarketsAgent();
+const workspaceAgent = new WorkspaceAgent();
+const deepResearchAgent = new DeepResearchAgent();
+const generalAgent = new GeneralAgent();
+
+const codingAgent = new CodingAgent();
+const liveInGameAgent = new LiveInGameAgent();
+const youtubeAgent = new YouTubeAgent();
+const portfolioSharpAgent = new PortfolioSharpAgent();
+const lineShopperAgent = new LineShopperAgent();
+const sentinelAgent = new SentinelAgent();
+const contrarianAgent = new ContrarianAgent();
+
+const registryRouter = new RegistryRouter([
+  sportsAgent,
+  marketsAgent,
+  workspaceAgent,
+  deepResearchAgent,
+  generalAgent,
+  codingAgent,
+  liveInGameAgent,
+  youtubeAgent,
+  portfolioSharpAgent,
+  lineShopperAgent,
+  sentinelAgent,
+  contrarianAgent
+], 'general-agent');
 
 let firebaseConfig: any;
 try {
@@ -2239,6 +2278,7 @@ For active sports traders, the discrepancy between the underlying implied perfor
               imageMime,
               timezone,
               domain,
+              payloadCarrier: {},
               onToken: (tokenText: string) => {
                   res.write(`data: ${JSON.stringify({ type: 'chunk', text: tokenText })}\n\n`);
               }

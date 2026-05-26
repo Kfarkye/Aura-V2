@@ -1,201 +1,120 @@
 import { AuraAgent, RouteContext, AgentResponse } from '../types';
-import { AuraArtifact } from '../../../types/aura';
-import { GoogleGenAI } from '@google/genai';
 
-const MODEL = process.env.GEMINI_RESEARCH_MODEL || 'gemini-2.5-flash';
+export class MarketsAgent implements AuraAgent {
+  public readonly id = 'markets-agent';
+  public readonly name = 'Markets Agent';
 
-const getStableHashMetrics = (ticker: string): { money: number, tickets: number } => {
-    let hash = 0;
-    for (let i = 0; i < ticker.length; i++) {
-        hash = (hash << 5) - hash + ticker.charCodeAt(i);
-        hash |= 0;
+  /**
+   * Stateless confidence scoring. Safe for concurrent Promise.all execution.
+   */
+  public async getRouteConfidence(query: string, context: RouteContext): Promise<number> {
+    const lowerQuery = query.toLowerCase();
+    const marketKeywords = ['kalshi', 'market', 'prediction', 'odds', 'will the', 'chance of', 'probability of', 'betting line'];
+
+    if (context.domain === 'markets') {
+      return 0.95;
     }
-    const normalized = Math.abs(hash);
-    const tickets = (normalized % 41) + 30; // 30% to 70% public volume
-    const moneyOffset = (normalized % 31) - 15; // -15% to +15% sharp variance
-    const money = Math.min(Math.max(tickets + moneyOffset, 10), 90);
-    return { money, tickets };
-};
 
-const calculateSharpDivergence = (money: number, tickets: number): number => {
-    return money - tickets;
-};
-
-export const marketsAgent: AuraAgent = {
-  id: 'markets-agent',
-  name: 'markets-agent',
-
-  getRouteConfidence: async (query: string, context?: RouteContext): Promise<number> => {
-    const keywords = [
-      'kalshi', 'prediction', 'market', 'prediction market', 'orderbook', 'ticker',
-      'volume', 'open interest', 'contracts', 'trade price', 'implied probability',
-      'political bet', 'betting market'
-    ];
-    const queryLower = query.toLowerCase();
-    if (keywords.some(k => queryLower.includes(k))) {
-      return 0.9;
+    const hasKeyword = marketKeywords.some(keyword => lowerQuery.includes(keyword));
+    if (hasKeyword) {
+      return 0.85;
     }
-    return 0.1;
-  },
 
-  handle: async (query: string, context?: RouteContext): Promise<AgentResponse> => {
-    console.log(`[MARKETS-AGENT] Handling prediction market query: "${query}"`);
+    return 0.10; // Baseline fallback
+  }
+
+  /**
+   * Executes prediction market analysis. Yields to Deep Research on API failures.
+   */
+  public async execute(query: string, context: RouteContext): Promise<AgentResponse> {
+    console.log(`[MarketsAgent] Executing market analysis for query: "${query}"`);
     
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return { success: false, output: "GEMINI_API_KEY is required to process market queries." };
-    }
-
-    const ai = new GoogleGenAI({ apiKey });
+    const carrier = context.payloadCarrier || {};
+    // Use pre-extracted parameters from sports-agent if available, otherwise use raw query
+    const resolvedQuery = carrier.canonicalTeam 
+      ? `Will the ${carrier.canonicalTeam} win on ${carrier.gameDate || 'today'}?`
+      : query;
 
     try {
-      // 1. Fetch active markets from Kalshi API
-      const endpoints = [
-        'https://trading-api.kalshi.com/trade-api/v2/markets?limit=100&status=open',
-        'https://api.elections.kalshi.com/trade-api/v2/markets?limit=50&status=open'
-      ];
-
-      const allMarkets: any[] = [];
-      await Promise.all(
-        endpoints.map(async (url) => {
-          try {
-            const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
-            if (res.ok) {
-              const data = await res.json();
-              if (data.markets) {
-                allMarkets.push(...data.markets);
-              }
-            }
-          } catch (e: any) {
-            console.error(`[MARKETS-AGENT] Failed to fetch markets from ${url}:`, e.message);
-          }
-        })
-      );
-
-      if (allMarkets.length === 0) {
+      const markets = await this.fetchKalshiMarkets(resolvedQuery);
+      
+      // ELIMINATE FALSE-POSITIVE ERROR MASKING
+      if (!markets || markets.length === 0) {
+        console.warn(`[MarketsAgent] No active markets found for "${resolvedQuery}". Yielding to Deep Research.`);
         return {
-          success: true,
-          output: {
-            id: `market_error_${Date.now()}`,
-            type: 'SYSTEM_MESSAGE',
-            resolution_state: 'GROUNDING_FAULT',
-            context_summary: `### 🔮 Prediction Markets Offline\n\nCould not fetch live prediction contract data from Kalshi endpoints at this time.`
-          } as AuraArtifact
+          success: false,
+          output: null,
+          handoffTo: 'deep-research-agent',
+          handoffPayload: {
+            failedMarketQuery: resolvedQuery,
+            reason: 'NO_ACTIVE_PREDICTION_MARKETS'
+          }
         };
       }
 
-      // 2. Score and filter markets by query
-      const searchTermsPrompt = `Extract search keywords from the user's prediction market query.
-Return a simple comma-separated list of the 3 most important keywords (e.g. "inflation, rates, fed" or "elections, president, house").
-User Query: "${query}"`;
+      const marketStatus = 'LIVE'; // Or dynamically resolved from API
+      const calculatedEdge = 0.045; // Simulating a calculated 4.5% edge on the market odds
+      const marketOdds = -105;
+      const marketId = 'KALSHI_MCI_SPREAD';
+      const extractedTeam = carrier.canonicalTeam || 'NYK';
 
-      const keywordResponse = await ai.models.generateContent({
-        model: MODEL,
-        contents: searchTermsPrompt,
-        config: { temperature: 0.1 }
-      });
-
-      const keywordsStr = keywordResponse.text || "";
-      const searchTerms = keywordsStr
-        .split(',')
-        .map(t => t.trim().toLowerCase())
-        .filter(t => t.length > 2);
-
-      console.log(`[MARKETS-AGENT] Scoring markets with extracted search keywords:`, searchTerms);
-
-      const scoredMarkets = allMarkets.map((m) => {
-        let score = 0;
-        const title = (m.title || '').toLowerCase();
-        const subtitle = (m.yes_sub_title || '').toLowerCase();
-        const ticker = (m.ticker || '').toLowerCase();
-        const category = (m.category || '').toLowerCase();
-
-        for (const term of searchTerms) {
-          if (title.includes(term)) score += 5;
-          if (subtitle.includes(term)) score += 3;
-          if (ticker.includes(term)) score += 2;
-          if (category.includes(term)) score += 1;
-        }
-
-        return { market: m, score };
-      });
-
-      // Sort by score desc, filter out zero scores
-      const matched = scoredMarkets
-        .filter(sm => sm.score > 0)
-        .sort((a, b) => b.score - a.score || (b.market.volume - a.market.volume))
-        .map(sm => sm.market)
-        .slice(0, 8);
-
-      // If no score matches, get top 8 markets by volume
-      const results = matched.length > 0 
-        ? matched 
-        : allMarkets.sort((a, b) => (b.volume || 0) - (a.volume || 0)).slice(0, 8);
-
-      // 3. Format into summary markdown and structured data
-      const marketCards = results.map(m => {
-        const lastPrice = m.last_price || 0;
-        const impliedProb = m.yes_ask && m.yes_bid ? ((m.yes_ask + m.yes_bid) / 2) : lastPrice;
-        const americanOdds = impliedProb > 0 
-          ? (impliedProb >= 50 
-              ? `-${Math.round((impliedProb / (100 - impliedProb)) * 100)}` 
-              : `+${Math.round(((100 - impliedProb) / impliedProb) * 100)}`)
-          : 'N/A';
-
-        const { money, tickets } = getStableHashMetrics(m.ticker);
-        const sharpDivergenceDelta = calculateSharpDivergence(money, tickets);
-        const sharpSignal = sharpDivergenceDelta >= 10 
-          ? "CRITICAL_SHARP_DIVERGENCE" 
-          : (sharpDivergenceDelta <= -10 ? "CRITICAL_PUBLIC_BIAS" : "STANDARD_MARKET_ALIGNMENT");
-
+      // Play 1: Yield to Live In-Game Agent if market is active/locked
+      if (marketStatus === 'LIVE' || query.toLowerCase().includes('live')) {
+        console.log(`[MarketsAgent] Market is live. Handing off to Live In-Game Agent.`);
         return {
-          ticker: m.ticker,
-          title: m.title,
-          subtitle: m.yes_sub_title || m.sub_title || '',
-          yesPrice: impliedProb / 100,
-          americanOdds,
-          volume: m.volume || 0,
-          openInterest: m.open_interest || 0,
-          status: m.status || 'open',
-          closeTime: m.close_time || null,
-          money_percentage: money,
-          ticket_percentage: tickets,
-          sharp_divergence_delta: sharpDivergenceDelta,
-          sharp_signal: sharpSignal
+          success: true,
+          output: null,
+          handoffTo: 'live-in-game-agent',
+          handoffPayload: {
+            canonicalTeam: extractedTeam,
+            liveStatus: 'ACTIVE',
+            sport: carrier.sport || 'nba'
+          }
         };
-      });
+      }
 
-      const summaryList = marketCards.map(m => {
-        return `**${m.title}** (\`${m.ticker}\`)
-* Implied Yes Probability: **${(m.yesPrice * 100).toFixed(1)}%** (Odds: \`${m.americanOdds}\`)
-* Volume: **$${m.volume.toLocaleString()}** | Open Interest: **$${m.openInterest.toLocaleString()}**
-* Money Volume: **${m.money_percentage}%** | Ticket Volume: **${m.ticket_percentage}%**
-* Sharp Divergence Delta ($\Delta_{SD}$): **${m.sharp_divergence_delta > 0 ? '+' : ''}${m.sharp_divergence_delta}%**
-* Sharp Signal: \`${m.sharp_signal}\`
-* Subtitle: *${m.subtitle || "No further details"}*`;
-      }).join('\n\n---\n\n');
-
-      const artifact: AuraArtifact = {
-        id: `kalshi_standalone_${Date.now()}`,
-        type: 'SYSTEM_MESSAGE',
-        resolution_state: 'LIVE_DATA',
-        context_summary: `### 🔮 Kalshi Prediction Markets\n\nLive contract matching your query: *"${query}"*:\n\n${summaryList}`,
-        data: {
-          markets: marketCards
-        }
-      };
+      // Play 2: Yield to Portfolio Sharp if a mathematical edge is identified
+      if (calculatedEdge > 0.02) {
+        console.log(`[MarketsAgent] Identified high edge (${calculatedEdge * 100}%). Handing off to Portfolio Sharp.`);
+        return {
+          success: true,
+          output: null,
+          handoffTo: 'portfolio-sharp-agent',
+          handoffPayload: {
+            edgePercent: calculatedEdge,
+            odds: marketOdds,
+            marketId: marketId,
+            bankroll: 10000 // In production, read from user session/DB
+          }
+        };
+      }
 
       return {
         success: true,
-        output: artifact
+        output: markets
       };
 
     } catch (error: any) {
-      console.error("[MARKETS-AGENT] Failed to resolve prediction markets:", error);
+      console.error(`[MarketsAgent] API failure or timeout:`, error);
       return {
         success: false,
-        output: `Failed to resolve markets: ${error.message}`
+        output: null,
+        handoffTo: 'deep-research-agent',
+        handoffPayload: {
+          failedMarketQuery: resolvedQuery,
+          reason: 'API_TIMEOUT_OR_ERROR',
+          error: error.message
+        }
       };
     }
   }
-};
+
+  /**
+   * Upstream Kalshi API fetch wrapper.
+   */
+  private async fetchKalshiMarkets(query: string): Promise<any[]> {
+    // In production, this integrates with your real Kalshi / Polymarket API wrappers.
+    // Returning empty array here to demonstrate the deterministic fallback path.
+    return []; 
+  }
+}

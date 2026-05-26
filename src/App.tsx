@@ -4,7 +4,7 @@ import {
     CloudFog, AlertCircle, ArrowLeft, Activity, Copy, Check, ExternalLink, Sparkles, Globe,
     Search, Send, ShieldCheck, Calendar as CalendarIcon, Camera, X, TrendingUp, Zap, Link as LinkIcon, ChevronRight,
     Bot, Filter, MessageSquare, PlusCircle, BookOpen, FileText, FileSpreadsheet, Lock, Clock, User as UserIcon,
-    ArrowDown, Terminal, TerminalSquare
+    ArrowDown, Terminal, TerminalSquare, Code2
 } from 'lucide-react'; 
 import Markdown, { Components } from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -51,6 +51,23 @@ export interface FeedCard {
 }
 
 export type SubdomainTab = 'sports' | 'workspace' | 'kalshi';
+
+// Fast-Pass Regex Interceptors
+const CONVERSATIONAL_GREETINGS = /^(hello|hi|hey|greetings|yo|good morning|good afternoon|sup)[.!?\s]*$/i;
+const CODE_DETECTION_PATTERNS = [
+    /^\s*(import|export|const|let|var|function|class|def|async|await|return|interface|type)\b/m,
+    /(?:React|useState|useEffect|useMemo|useCallback)/,
+    /[{};\[\]]{3,}/, 
+    /(\bdef\s+\w+\s*\(|\bclass\s+\w+\s*:)/,
+    /(\bpublic\s+class\s+\w+|\bpublic\s+static\s+void\s+main\b)/
+];
+
+/**
+ * Evaluates whether a query contains structural programming syntax.
+ */
+const isStructuralCode = (text: string): boolean => {
+    return CODE_DETECTION_PATTERNS.some(pattern => pattern.test(text));
+};
 
 const SPRING_TRANSITION = { type: "spring" as const, stiffness: 400, damping: 30 };
 const EASE_TRANSITION: [number, number, number, number] = [0.16, 1, 0.3, 1];
@@ -189,6 +206,49 @@ In the piece, analysts break down the specific mechanical adjustments Anthony Ed
 ];
 
 // ============================================================================
+// IDE-Grade Code Block Renderer
+// ============================================================================
+const CodeBlock = React.memo(({ lang, content, ...props }: any) => {
+    const [copied, setCopied] = useState(false);
+    
+    const handleCopy = () => {
+        navigator.clipboard.writeText(content);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+    };
+
+    return (
+        <div className="relative group my-6 rounded-[12px] overflow-hidden border border-white/[0.06] shadow-[0_8px_30px_rgba(0,0,0,0.4)] bg-[#050505]">
+            <div className="flex items-center justify-between bg-[#0A0A0C] px-4 py-2.5 border-b border-white/[0.04]">
+                <div className="flex items-center gap-2">
+                    <Code2 className="w-3.5 h-3.5 text-[#4285F4]" />
+                    <span className="text-[10px] text-[#4285F4] font-mono uppercase tracking-widest font-bold">{lang}</span>
+                </div>
+                <button 
+                    onClick={handleCopy} 
+                    className="text-neutral-500 hover:text-white transition-colors outline-none flex items-center gap-1.5 active:scale-95"
+                >
+                    {copied ? <Check className="w-3.5 h-3.5 text-[#34C759]" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span className={`text-[9px] font-mono uppercase tracking-widest font-bold ${copied ? 'text-[#34C759]' : ''}`}>
+                        {copied ? 'Copied' : 'Copy'}
+                    </span>
+                </button>
+            </div>
+            <SyntaxHighlighter 
+                style={vscDarkPlus as any} 
+                language={lang} 
+                PreTag="div" 
+                customStyle={{ margin: 0, padding: '1.5rem', background: 'transparent', fontSize: '13px', lineHeight: '1.65', fontFamily: 'monospace' }} 
+                {...props}
+            >
+                {content}
+            </SyntaxHighlighter>
+        </div>
+    );
+});
+CodeBlock.displayName = 'CodeBlock';
+
+// ============================================================================
 // Markdown Components (Institutional Chat Rendering)
 // ============================================================================
 const CHAT_REMARK_PLUGINS = [remarkGfm];
@@ -209,7 +269,7 @@ const CHAT_MARKDOWN_COMPONENTS: Components = {
     td: ({node, ...props}) => <td className="px-4 py-3 border-b border-white/[0.02] text-neutral-300" {...props} />,
     code: ({node, className, children, ...props}: any) => {
         const match = /language-(\w+)/.exec(className || '');
-        const lang = match?.[1];
+        const lang = match?.[1] || 'text';
         const content = String(children).replace(/\n$/, '');
 
         if (lang === 'chart') return <MarkdownChart data={content} />;
@@ -217,22 +277,14 @@ const CHAT_MARKDOWN_COMPONENTS: Components = {
         if (lang === 'editorial') return <EditorialCarousel data={content} />;
         
         const isInline = !match && !content.includes('\n');
-        if (!isInline && match) {
-            return (
-                <div className="relative group my-5">
-                    <div className="absolute top-0 right-0 bg-[#0A0A0C] z-10 px-3 py-1 text-[9px] text-neutral-500 font-mono uppercase tracking-widest font-bold border-b border-l border-white/[0.04] rounded-bl-[8px] rounded-tr-[12px]">{lang}</div>
-                    <SyntaxHighlighter style={vscDarkPlus as any} language={lang} PreTag="div" customStyle={{ margin: 0, padding: '1.5rem', background: '#050505', fontSize: '12px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.04)' }} {...props}>
-                        {content}
-                    </SyntaxHighlighter>
-                </div>
-            );
-        }
-        return <code className="text-neutral-300 bg-white/[0.04] px-1.5 py-0.5 rounded-[4px] text-[13px] font-mono border border-white/[0.08]" {...props}>{children}</code>;
+        if (!isInline) return <CodeBlock lang={lang} content={content} {...props} />;
+        
+        return <code className="text-[#4285F4] bg-[#4285F4]/10 px-1.5 py-0.5 rounded-[4px] text-[13px] font-mono border border-[#4285F4]/20" {...props}>{children}</code>;
     },
     pre: ({node, children, ...props}: any) => {
-        const hasCustomComponent = node?.children?.some((child: any) => child.tagName === 'code' && child.properties?.className?.some((cls: string) => cls.includes('language-chart') || cls.includes('language-bettingangles') || cls.includes('language-editorial')));
-        if (hasCustomComponent) return <div className="my-6 w-full">{children}</div>;
-        return <pre className="bg-[#050505] p-6 pt-10 rounded-[20px] overflow-x-auto border border-white/[0.06] text-[13px] leading-[1.65] shadow-inner font-mono text-neutral-300 m-0" {...props}>{children}</pre>;
+        const hasCustomComponent = node?.children?.some((child: any) => child.tagName === 'code');
+        if (hasCustomComponent) return <div className="w-full">{children}</div>;
+        return <pre className="bg-[#050505] p-6 rounded-[12px] overflow-x-auto border border-white/[0.06] text-[13px] leading-[1.65] shadow-[0_8px_30px_rgba(0,0,0,0.4)] font-mono text-neutral-300 my-6" {...props}>{children}</pre>;
     }
 };
 
@@ -527,6 +579,7 @@ function ChatInterface({
 }) {
   const [prompt, setPrompt] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loadingState, setLoadingState] = useState<'synthesizing' | 'analyzing'>('synthesizing');
   const endRef = useRef<HTMLDivElement>(null);
   
   // URL synced state
@@ -605,14 +658,43 @@ function ChatInterface({
   const clearAttachment = () => { setSelectedImage(null); setSelectedMime(null); if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl); setImagePreviewUrl(null); };
 
   const handleQuery = async (eOrPreset?: React.FormEvent | string, contextData?: DriveDocumentData) => {
-    // Strictly prevent native HTML form routing/reloading
     if (eOrPreset && typeof eOrPreset !== 'string' && 'preventDefault' in eOrPreset) {
         eOrPreset.preventDefault();
     }
     
-    const activePrompt = typeof eOrPreset === 'string' ? eOrPreset : prompt;
-    if ((!activePrompt.trim() && !selectedImage && !contextData) || loading) return;
+    let rawPrompt = typeof eOrPreset === 'string' ? eOrPreset : prompt;
+
+    // Sanitize tokenizer state leaks
+    if (rawPrompt.toLowerCase().includes('intent:')) {
+        const segments = rawPrompt.split(/intent:/i);
+        rawPrompt = segments[segments.length - 1].trim(); 
+    }
+
+    const activePrompt = rawPrompt.trim();
+    if ((!activePrompt && !selectedImage && !contextData) || loading) return;
+
+    // Fast-Pass 1: Conversational Greetings (Zero LLM Latency)
+    if (CONVERSATIONAL_GREETINGS.test(activePrompt) && !selectedImage && !contextData) {
+        clearAttachment(); setPrompt('');
+        setMessages(prev => [
+            ...prev, 
+            { id: generateId('usr'), role: 'user', content: activePrompt },
+            { id: generateId('mod'), role: 'model', artifacts: [{ id: generateId('sys'), type: 'SYSTEM_MESSAGE', resolution_state: 'CONVERSATIONAL', context_summary: "Hello. Substrate Node online. Ready for execution." }] }
+        ]);
+        return;
+    }
+
+    // Fast-Pass 2: Code Structure Interceptor
+    const isCode = isStructuralCode(activePrompt);
+    let routedDomain = activeSubdomain as string;
     
+    if (isCode) {
+        routedDomain = "coding"; 
+        setLoadingState('analyzing');
+    } else {
+        setLoadingState('synthesizing');
+    }
+
     const userMessageImg = imagePreviewUrl || undefined;
     const sendImg = selectedImage; const sendMime = selectedMime;
 
@@ -620,31 +702,38 @@ function ChatInterface({
     setMessages(prev => [...prev, { id: generateId('usr'), role: 'user', content: activePrompt || (contextData ? `Analyze document: ${contextData.name}` : "Analyze asset"), image: userMessageImg }]);
     setLoading(true); setPrompt('');
 
-    // ============================================================================
-    // FRONTEND HEURISTIC INJECTOR (Zero Mock Data)
-    // Ensures the LLM has Live Feed Context to answer "best bets" queries
-    // ============================================================================
+    // System Routing & Temporal Anchor Mapping
     let injectedPrompt = activePrompt;
     const lowerPrompt = activePrompt.toLowerCase();
-    if (lowerPrompt.includes('best bet') || lowerPrompt.includes('tomorrow') || lowerPrompt.includes('market') || lowerPrompt.includes('edge') || lowerPrompt.includes('query analysis')) {
+    
+    if (isCode || lowerPrompt.match(/write a script|refactor|audit|regex|typescript|python|code/)) {
+        routedDomain = "coding";
+        injectedPrompt = `[SYSTEM_ROUTING_OVERRIDE: Route to CodingAgent. Perform static analysis, execute architectural audit, and provide elite software engineering feedback. Return analysis wrapped in a CODE_ANALYSIS_ARTIFACT.]\n\n${injectedPrompt}`;
+    } 
+    else if (lowerPrompt.match(/best bet|tomorrow|tomrrow|tonight|today|edge|matrix|live|slate|prediction|market|query analysis/)) {
         try {
             const liveData = globalFeedCache || await fetchGlobalFeed();
             if (liveData && liveData.length > 0) {
-                const summarizedFeed = liveData.slice(0, 4).map(f => ({ 
-                    event: f.headline, 
-                    insight: f.summary, 
-                }));
-                injectedPrompt += `\n\n<SYSTEM_CONTEXT>\nYou are a live quantitative betting assistant. Based on the user's request, analyze these currently active high-value market discrepancies from the Aura Substrate: ${JSON.stringify(summarizedFeed)}. Provide a confident, data-driven recommendation.</SYSTEM_CONTEXT>`;
+                const summarizedFeed = liveData.slice(0, 5).map(f => ({ event: f.headline, insight: f.summary }));
+                const userTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+                const localTime = new Date().toLocaleString("en-US", { timeZone: userTz });
+                
+                injectedPrompt += `\n\n[SYSTEM_CONTEXT: CLIENT_TIMEZONE is ${userTz}. CLIENT_LOCAL_TIME is ${localTime}. CRITICAL DIRECTIVE: The user is asking for actionable market analysis. DO NOT ATTEMPT TO ROUTE TO A TOOL. Force conversational generation. Synthesize a recommendation based on this active Substrate telemetry: ${JSON.stringify(summarizedFeed)} ]`;
             }
         } catch (e) {
             console.warn("[AURA:INTERCEPTOR] Failed to inject feed context", e);
         }
+    } 
+    else {
+        const userTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const localTime = new Date().toLocaleString("en-US", { timeZone: userTz });
+        injectedPrompt = `[SYSTEM_TEMPORAL_ANCHOR: Current User Time is ${localTime} (${userTz}). Strictly resolve relative dates ("today", "tomorrow", "tonight") against this local time. Do NOT use UTC server time.]\n\n${injectedPrompt}`;
     }
 
     const history: AuraHistoryMessage[] = messages.reduce<AuraHistoryMessage[]>((acc, m) => {
        if (m.role === 'user' && m.content) acc.push({ role: 'user', content: m.content });
        else if (m.role === 'model' && m.artifacts) {
-           const sysMsg = m.artifacts.find(a => a.type === 'SYSTEM_MESSAGE')?.context_summary;
+           const sysMsg = m.artifacts.find(a => a.type === 'SYSTEM_MESSAGE' || a.type === 'CODE_ANALYSIS_ARTIFACT' as any)?.context_summary;
            if (sysMsg) acc.push({ role: 'model', content: sysMsg });
        }
        return acc;
@@ -653,7 +742,7 @@ function ChatInterface({
     const messagePayload: any = { 
         message: injectedPrompt, 
         history, 
-        domain: activeSubdomain, 
+        domain: routedDomain, 
         image: sendImg, 
         imageMime: sendMime,
         client_context: {
@@ -670,7 +759,6 @@ function ChatInterface({
         const headers: Record<string, string> = { 'Content-Type': 'application/json' };
         if (token) headers['Authorization'] = `Bearer ${token}`;
         
-        // Production Fetch -> Backend handles MCP tools
         const response = await fetch('/api/chat', { method: 'POST', headers, body: JSON.stringify(messagePayload) });
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         if (!response.body) throw new Error("ReadableStream not supported");
@@ -709,6 +797,50 @@ function ChatInterface({
   };
 
   const renderArtifact = useCallback((artifact: AuraArtifact) => {
+      // THE CODING AGENT RENDERER (Institutional IDE Implementation)
+      if (artifact.type === 'CODE_ANALYSIS_ARTIFACT' as any) {
+          const analysisData = artifact.data?.static_analysis;
+          const errorCount = analysisData?.errors || 0;
+          const warningCount = analysisData?.warnings || 0;
+          const isClean = errorCount === 0;
+
+          return (
+              <div key={artifact.id} className="w-full mb-6 font-sans group relative text-left">
+                  <div className="absolute top-0 right-0 sm:-mr-12 opacity-0 group-hover:opacity-100 transition-opacity z-10 hidden sm:block mt-2">
+                      <MessageCopyButton text={artifact.context_summary || ''} />
+                  </div>
+                  
+                  {/* Institutional Static Analysis Telemetry Banner */}
+                  {analysisData && (
+                      <div className="flex flex-wrap items-center gap-3 sm:gap-4 px-5 py-3.5 bg-[#0A0A0C] border border-white/[0.08] rounded-t-[16px] border-b-0 text-[10px] font-mono text-neutral-400 select-none shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
+                          <span className="flex items-center gap-2 font-bold uppercase tracking-widest text-white/90">
+                              <TerminalSquare className="w-3.5 h-3.5 text-[#4285F4]" /> Static Analysis
+                          </span>
+                          <span className="text-white/[0.08] hidden sm:inline">|</span>
+                          <span className={`flex items-center gap-1.5 font-bold uppercase tracking-widest ${!isClean ? 'text-[#FF3B30]' : 'text-[#34C759]'}`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${!isClean ? 'bg-[#FF3B30] shadow-[0_0_8px_rgba(255,59,48,0.8)] animate-pulse' : 'bg-[#34C759]'}`} />
+                              Errors: {errorCount}
+                          </span>
+                          <span className="text-white/[0.08]">|</span>
+                          <span className={`font-bold uppercase tracking-widest ${warningCount > 0 ? 'text-[#FF9500]' : ''}`}>
+                              Warnings: {warningCount}
+                          </span>
+                          <span className="text-white/[0.08] hidden sm:inline">|</span>
+                          <span className="font-bold uppercase tracking-widest hidden sm:inline">
+                              Complexity: {analysisData.cognitive_complexity || 'Optimal'}
+                          </span>
+                      </div>
+                  )}
+                  
+                  <div className={`bg-[#050505] p-6 sm:p-8 border border-white/[0.08] shadow-[0_12px_40px_rgba(0,0,0,0.4)] text-[16px] text-white/95 leading-[1.65] font-sans antialiased font-normal max-w-none w-full ${analysisData ? 'rounded-b-[16px] rounded-t-none border-t-white/[0.02]' : 'rounded-[16px]'}`}>
+                      <Markdown remarkPlugins={CHAT_REMARK_PLUGINS} components={CHAT_MARKDOWN_COMPONENTS}>
+                          {artifact.context_summary || ''}
+                      </Markdown>
+                  </div>
+              </div>
+          );
+      }
+
       switch (artifact.resolution_state) {
           case 'GROUNDING_FAULT':
               return (
@@ -893,7 +1025,7 @@ function ChatInterface({
           {loading && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.4 }} className="flex items-center justify-center mt-8 mb-4 gap-3 text-neutral-500 text-[10px] font-mono tracking-widest uppercase select-none font-bold" aria-live="polite" aria-busy="true">
                  <motion.span animate={{ opacity: [0.2, 1, 0.2] }} transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }} className="w-2 h-2 bg-[#4285F4] rounded-full" />
-                 <span className="tracking-widest">Synthesizing</span>
+                 <span className="tracking-widest">{loadingState === 'analyzing' ? 'Analyzing' : 'Synthesizing'}</span>
               </motion.div>
           )}
       </main>

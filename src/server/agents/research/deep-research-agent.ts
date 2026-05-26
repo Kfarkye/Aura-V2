@@ -4,11 +4,11 @@ import { AuraArtifact } from '../../../types/aura';
 
 const MODEL = process.env.GEMINI_RESEARCH_MODEL || 'gemini-2.5-flash';
 
-export const deepResearchAgent: AuraAgent = {
-  id: 'deep-research-agent',
-  name: 'deep-research-agent',
+export class DeepResearchAgent implements AuraAgent {
+  public readonly id = 'deep-research-agent';
+  public readonly name = 'deep-research-agent';
   
-  getRouteConfidence: async (query: string, context?: RouteContext): Promise<number> => {
+  public async getRouteConfidence(query: string, context?: RouteContext): Promise<number> {
     const keywords = [
       'deep research', 'deep search', 'comprehensive search', 'literature review', 
       'academic study', 'scholar research', 'market study', 'market intelligence', 
@@ -19,9 +19,9 @@ export const deepResearchAgent: AuraAgent = {
       return 0.95;
     }
     return 0.15;
-  },
+  }
 
-  handle: async (query: string, context?: RouteContext): Promise<AgentResponse> => {
+  public async execute(query: string, context?: RouteContext): Promise<AgentResponse> {
     console.log(`[DEEP-RESEARCH] Starting deep research pipeline for: "${query}"`);
     
     const apiKey = process.env.GEMINI_API_KEY;
@@ -238,4 +238,4 @@ Write with authority, precision, and elite premium prose. Use clean, bold markdo
       };
     }
   }
-};
+}
