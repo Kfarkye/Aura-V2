@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion'; // Changed to framer-motion for consistency
-import { ChevronLeft, ChevronRight, Info, Eye, ExternalLink, Globe } from 'lucide-react'; // Added icons, removed Pin as it's not used in this component
-import { Link } from 'react-router-dom';
+import { ChevronLeft, ChevronRight, Info, Eye, ExternalLink, Globe, CloudFog, Activity } from 'lucide-react'; // Added icons, removed Pin as it's not used in this component
+import { Link, useNavigate } from 'react-router-dom';
 
 // ============================================================================
 // Types

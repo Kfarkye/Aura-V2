@@ -19,11 +19,20 @@ function trustGateInvariantCheck(url: string): boolean {
  * injects requireInteractiveApproval security safeguards, compiles them,
  * and launches them into the Google Cloud runtime space.
  */
-export async function generateAndDeployMCP(_openApiSpec: any, projectId: string = 'aura-enterprise-ai'): Promise<any> {
+export async function generateAndDeployMCP(_openApiSpec: any, projectId: string = 'aura-enterprise-ai', onLogUpdate?: (message: string) => void): Promise<any> {
     const serviceName = `mcp-service-${Date.now()}`;
     const location = 'us-central1';
     const buildDir = path.join(process.cwd(), 'mcp-build-temp', serviceName);
     const logs: string[] = [];
+    if (onLogUpdate) {
+        logs.push = function(...items: string[]) {
+            for (const item of items) {
+                Array.prototype.push.call(logs, item);
+                onLogUpdate(item);
+            }
+            return logs.length;
+        };
+    }
 
     try {
         console.log(`[AURA:MCP] Creating dynamic workspace building directory: ${buildDir}`);

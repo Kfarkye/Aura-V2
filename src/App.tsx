@@ -3,7 +3,8 @@ import { BrowserRouter, Routes, Route, Link, useParams, useLocation, useNavigate
 import { 
     CloudFog, AlertCircle, ArrowLeft, Activity, Copy, Check, ExternalLink, Sparkles, Globe,
     Search, Send, ShieldCheck, Calendar as CalendarIcon, Camera, X, TrendingUp, Zap, Link as LinkIcon, ChevronRight,
-    Bot, Filter, MessageSquare, PlusCircle, BookOpen, FileText, FileSpreadsheet, Lock, Clock, User as UserIcon // Renamed User to UserIcon to avoid conflict
+    Bot, Filter, MessageSquare, PlusCircle, BookOpen, FileText, FileSpreadsheet, Lock, Clock, User as UserIcon,
+    ArrowDown, Terminal, TerminalSquare, Code2
 } from 'lucide-react'; 
 import Markdown, { Components } from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -34,7 +35,7 @@ import { DriveDocumentViewer, DriveDocumentData } from './components/DriveDocume
 import { LiveQuantTerminal } from './components/LiveQuantTerminal';
 import { ScrollToTop } from './components/ScrollToTop';
 import { Navigation } from './components/Navigation';
-import { MessageCopyButton } from './components/MessageCopyButton';
+import { MessageCopyButton, CopyButton } from './components/MessageCopyButton';
 
 // ============================================================================
 // Core Interfaces
@@ -50,6 +51,23 @@ export interface FeedCard {
 }
 
 export type SubdomainTab = 'sports' | 'workspace' | 'kalshi';
+
+// Fast-Pass Regex Interceptors
+const CONVERSATIONAL_GREETINGS = /^(hello|hi|hey|greetings|yo|good morning|good afternoon|sup)[.!?\s]*$/i;
+const CODE_DETECTION_PATTERNS = [
+    /^\s*(import|export|const|let|var|function|class|def|async|await|return|interface|type)\b/m,
+    /(?:React|useState|useEffect|useMemo|useCallback)/,
+    /[{};\[\]]{3,}/, 
+    /(\bdef\s+\w+\s*\(|\bclass\s+\w+\s*:)/,
+    /(\bpublic\s+class\s+\w+|\bpublic\s+static\s+void\s+main\b)/
+];
+
+/**
+ * Evaluates whether a query contains structural programming syntax.
+ */
+const isStructuralCode = (text: string): boolean => {
+    return CODE_DETECTION_PATTERNS.some(pattern => pattern.test(text));
+};
 
 const SPRING_TRANSITION = { type: "spring" as const, stiffness: 400, damping: 30 };
 const EASE_TRANSITION: [number, number, number, number] = [0.16, 1, 0.3, 1];
@@ -82,7 +100,7 @@ const SafeImage = React.memo(({ src, alt, containerClassName, imageClassName, pr
 
     if (status === 'error' || !src) {
         return (
-            <div className={`bg-neutral-900 flex flex-col items-center justify-center border border-white/[0.04] ${containerClassName || ''}`} aria-hidden="true">
+            <div className={`bg-[#050505] flex flex-col items-center justify-center border border-white/[0.04] ${containerClassName || ''}`} aria-hidden="true">
                 <CloudFog className="w-5 h-5 text-neutral-800 mb-1.5" />
                 <span className="text-[9px] font-mono uppercase tracking-widest text-neutral-600 font-bold">Asset Offline</span>
             </div>
@@ -90,9 +108,9 @@ const SafeImage = React.memo(({ src, alt, containerClassName, imageClassName, pr
     }
 
     return (
-        <div className={`relative overflow-hidden bg-neutral-950 border border-white/[0.04] ${containerClassName || ''}`} aria-busy={status === 'loading'}>
+        <div className={`relative overflow-hidden bg-[#0A0A0C] border border-white/[0.04] ${containerClassName || ''}`} aria-busy={status === 'loading'}>
             {status === 'loading' && (
-                <div className="absolute inset-0 bg-neutral-900 overflow-hidden pointer-events-none z-10" aria-hidden="true">
+                <div className="absolute inset-0 bg-[#050505] overflow-hidden pointer-events-none z-10" aria-hidden="true">
                     <motion.div 
                         className="absolute inset-0 w-[200%] h-full bg-gradient-to-r from-transparent via-white/[0.03] to-transparent -skew-x-12"
                         animate={{ x: ['-100%', '100%'] }}
@@ -112,7 +130,6 @@ const SafeImage = React.memo(({ src, alt, containerClassName, imageClassName, pr
                 loading={priority ? "eager" : "lazy"} 
                 decoding="async"
             />
-            {/* Ambient Vignette Mask for Text Readability */}
             <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_30%,rgba(0,0,0,0.6)_100%)] pointer-events-none mix-blend-multiply opacity-60 z-[5]" />
         </div>
     );
@@ -189,6 +206,49 @@ In the piece, analysts break down the specific mechanical adjustments Anthony Ed
 ];
 
 // ============================================================================
+// IDE-Grade Code Block Renderer
+// ============================================================================
+const CodeBlock = React.memo(({ lang, content, ...props }: any) => {
+    const [copied, setCopied] = useState(false);
+    
+    const handleCopy = () => {
+        navigator.clipboard.writeText(content);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+    };
+
+    return (
+        <div className="relative group my-6 rounded-[12px] overflow-hidden border border-white/[0.06] shadow-[0_8px_30px_rgba(0,0,0,0.4)] bg-[#050505]">
+            <div className="flex items-center justify-between bg-[#0A0A0C] px-4 py-2.5 border-b border-white/[0.04]">
+                <div className="flex items-center gap-2">
+                    <Code2 className="w-3.5 h-3.5 text-[#4285F4]" />
+                    <span className="text-[10px] text-[#4285F4] font-mono uppercase tracking-widest font-bold">{lang}</span>
+                </div>
+                <button 
+                    onClick={handleCopy} 
+                    className="text-neutral-500 hover:text-white transition-colors outline-none flex items-center gap-1.5 active:scale-95"
+                >
+                    {copied ? <Check className="w-3.5 h-3.5 text-[#34C759]" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span className={`text-[9px] font-mono uppercase tracking-widest font-bold ${copied ? 'text-[#34C759]' : ''}`}>
+                        {copied ? 'Copied' : 'Copy'}
+                    </span>
+                </button>
+            </div>
+            <SyntaxHighlighter 
+                style={vscDarkPlus as any} 
+                language={lang} 
+                PreTag="div" 
+                customStyle={{ margin: 0, padding: '1.5rem', background: 'transparent', fontSize: '13px', lineHeight: '1.65', fontFamily: 'monospace' }} 
+                {...props}
+            >
+                {content}
+            </SyntaxHighlighter>
+        </div>
+    );
+});
+CodeBlock.displayName = 'CodeBlock';
+
+// ============================================================================
 // Markdown Components (Institutional Chat Rendering)
 // ============================================================================
 const CHAT_REMARK_PLUGINS = [remarkGfm];
@@ -209,7 +269,7 @@ const CHAT_MARKDOWN_COMPONENTS: Components = {
     td: ({node, ...props}) => <td className="px-4 py-3 border-b border-white/[0.02] text-neutral-300" {...props} />,
     code: ({node, className, children, ...props}: any) => {
         const match = /language-(\w+)/.exec(className || '');
-        const lang = match?.[1];
+        const lang = match?.[1] || 'text';
         const content = String(children).replace(/\n$/, '');
 
         if (lang === 'chart') return <MarkdownChart data={content} />;
@@ -217,22 +277,14 @@ const CHAT_MARKDOWN_COMPONENTS: Components = {
         if (lang === 'editorial') return <EditorialCarousel data={content} />;
         
         const isInline = !match && !content.includes('\n');
-        if (!isInline && match) {
-            return (
-                <div className="relative group my-5">
-                    <div className="absolute top-0 right-0 bg-[#0A0A0C] z-10 px-3 py-1 text-[9px] text-neutral-500 font-mono uppercase tracking-widest font-bold border-b border-l border-white/[0.04] rounded-bl-[8px] rounded-tr-[12px]">{lang}</div>
-                    <SyntaxHighlighter style={vscDarkPlus as any} language={lang} PreTag="div" customStyle={{ margin: 0, padding: '1.5rem', background: '#050505', fontSize: '12px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.04)' }} {...props}>
-                        {content}
-                    </SyntaxHighlighter>
-                </div>
-            );
-        }
-        return <code className="text-neutral-300 bg-white/[0.04] px-1.5 py-0.5 rounded-[4px] text-[13px] font-mono border border-white/[0.08]" {...props}>{children}</code>;
+        if (!isInline) return <CodeBlock lang={lang} content={content} {...props} />;
+        
+        return <code className="text-[#4285F4] bg-[#4285F4]/10 px-1.5 py-0.5 rounded-[4px] text-[13px] font-mono border border-[#4285F4]/20" {...props}>{children}</code>;
     },
     pre: ({node, children, ...props}: any) => {
-        const hasCustomComponent = node?.children?.some((child: any) => child.tagName === 'code' && child.properties?.className?.some((cls: string) => cls.includes('language-chart') || cls.includes('language-bettingangles') || cls.includes('language-editorial')));
-        if (hasCustomComponent) return <div className="my-6 w-full">{children}</div>;
-        return <pre className="bg-[#050505] p-6 pt-10 rounded-[20px] overflow-x-auto border border-white/[0.06] text-[13px] leading-[1.65] shadow-inner font-mono text-neutral-300 m-0" {...props}>{children}</pre>;
+        const hasCustomComponent = node?.children?.some((child: any) => child.tagName === 'code');
+        if (hasCustomComponent) return <div className="w-full">{children}</div>;
+        return <pre className="bg-[#050505] p-6 rounded-[12px] overflow-x-auto border border-white/[0.06] text-[13px] leading-[1.65] shadow-[0_8px_30px_rgba(0,0,0,0.4)] font-mono text-neutral-300 my-6" {...props}>{children}</pre>;
     }
 };
 
@@ -244,7 +296,7 @@ const EDITORIAL_MARKDOWN_COMPONENTS: Components = {
     blockquote: ({node, ...props}) => <blockquote className="border-l-[4px] border-[#4285F4] pl-6 sm:pl-8 my-12 py-5 italic text-[24px] sm:text-[26px] font-serif text-neutral-400 leading-[1.45] tracking-tight bg-gradient-to-r from-[#4285F4]/10 to-transparent rounded-r-3xl shadow-sm" {...props} />,
     ul: ({node, ...props}) => <ul className="list-none space-y-4 mt-6 mb-10 text-[#D4D4D4] font-serif text-[19px] sm:text-[20px]" {...props} />,
     ol: ({node, ...props}) => <ol className="list-decimal pl-6 mt-6 mb-10 space-y-4 text-[#D4D4D4] font-serif text-[19px] sm:text-[20px] tabular-nums lining-nums marker:text-neutral-500 marker:font-sans" {...props} />,
-    li: ({node, ...props}) => <li className="relative pl-8 before:absolute before:left-0 before:top-[0.65em] before:w-[4px] before:h-[1px] before:bg-neutral-600 leading-[1.85]" {...props} />,
+    li: ({node, ...props}) => <li className="relative pl-8 before:absolute before:left-0 before:top-[0.65em] before:w-[4px] before:h-[1px] before:bg-[#4285F4] leading-[1.85]" {...props} />,
     strong: ({node, ...props}) => <strong className="font-semibold text-white/95" {...props} />,
     hr: ({node, ...props}) => <hr className="my-16 border-t border-white/[0.08]" {...props} />,
 };
@@ -341,7 +393,7 @@ const useStoryData = (id?: string) => {
 
 // ============================================================================
 // Feed Components
-// ============================================================================
+// ===========================================================================
 const FeedItem = React.memo(({ item }: { item: FeedCard }) => {
     const navigate = useNavigate();
     const destinationUrl = `/story/${item.slug || item.id}`;
@@ -359,9 +411,22 @@ const FeedItem = React.memo(({ item }: { item: FeedCard }) => {
     const isPredictionMarket = item.type === 'PREDICTION_MARKET';
     const isAuraEditorial = item.type === 'EDITORIAL';
 
-    const cardVariants = {
-        hover: { y: -4, scale: 1.005 },
-        tap: { scale: 0.98 }
+    // Accessible Event Delegation: Prevents Link Nesting violations
+    const handleCardClick = (e: React.MouseEvent) => {
+        const target = e.target as HTMLElement;
+        if (target.closest('button') || target.closest('a') || target.closest('input')) {
+            return;
+        }
+        navigate(destinationUrl);
+    };
+
+    const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+            const target = e.target as HTMLElement;
+            if (target.closest('button') || target.closest('a')) return;
+            e.preventDefault();
+            navigate(destinationUrl);
+        }
     };
 
     return (
@@ -369,32 +434,29 @@ const FeedItem = React.memo(({ item }: { item: FeedCard }) => {
            whileHover={{ y: -4, scale: 1.005 }}
            whileTap={{ scale: 0.98 }}
            transition={SPRING_TRANSITION}
-           className="relative block w-full mb-10 group"
+           onClick={handleCardClick}
+           onKeyDown={handleKeyDown}
+           tabIndex={0}
+           role="link"
+           aria-label={`Read full analysis: ${item.headline}`}
+           className="relative block w-full mb-10 group outline-none focus-visible:ring-2 focus-visible:ring-white/20 rounded-[32px] cursor-pointer"
         >
-            <Link 
-                to={destinationUrl}
-                className="absolute inset-0 z-10 rounded-[32px] outline-none focus-visible:ring-2 focus-visible:ring-white/20"
-                aria-label={`Read full analysis: ${item.headline}`}
-            />
-            
             <div className={`absolute inset-0 bg-gradient-to-r from-transparent via-transparent to-transparent ${isExternalNews ? sourceStyling.glow : 'group-hover:from-[#4285F4]/10'} rounded-[32px] blur-2xl transition-all duration-700 pointer-events-none -z-10 transform-gpu opacity-40`} />
             
-            <div className={`w-full relative bg-[#050505] border border-white/[0.04] rounded-[32px] overflow-hidden shadow-[0_12px_40px_rgba(0,0,0,0.3)] transition-colors duration-500 transform-gpu group-hover:bg-[#0A0A0C] pointer-events-none ${isExternalNews ? sourceStyling.hoverBorder : 'group-hover:border-[#4285F4]/50'}`}>
+            <div className={`w-full relative bg-[#050505] border border-white/[0.04] rounded-[32px] overflow-hidden shadow-[0_12px_40px_rgba(0,0,0,0.3)] transition-colors duration-500 transform-gpu group-hover:bg-[#0A0A0C] ${isExternalNews ? sourceStyling.hoverBorder : 'group-hover:border-[#4285F4]/50'}`}>
                 
                 {item.image_url && (
                     <div className="w-full aspect-[21/9] sm:aspect-[16/9] relative bg-[#0A0A0C] border-b border-white/[0.02] overflow-hidden pointer-events-none z-0">
                         <SafeImage 
-                            src={item.image_url} 
-                            alt={item.headline}
-                            containerClassName="absolute inset-0 border-none"
+                            src={item.image_url} alt={item.headline} containerClassName="absolute inset-0 border-none"
                             imageClassName={`opacity-80 group-hover:opacity-100 transition-all duration-700 scale-[1.01] group-hover:scale-[1.03] ${isAuraEditorial ? 'grayscale-[0.3] group-hover:grayscale-0' : 'grayscale-0'}`}
                         />
                         <div className="absolute inset-0 bg-gradient-to-t from-[#050505] via-[#050505]/30 to-transparent opacity-100" />
                     </div>
                 )}
 
-                <div className={`flex flex-col p-8 sm:p-10 relative z-20 pointer-events-none ${item.image_url ? '-mt-24' : ''}`}>
-                   <div className="flex items-center justify-between mb-6 select-none font-sans pointer-events-auto">
+                <div className={`flex flex-col p-8 sm:p-10 relative z-20 ${item.image_url ? '-mt-24' : ''}`}>
+                   <div className="flex items-center justify-between mb-6 select-none font-sans">
                        <div className="flex items-center gap-3">
                            <span className={`text-[10px] font-bold font-mono uppercase tracking-widest text-white/95 bg-[#000000]/80 backdrop-blur-md px-3 py-1.5 rounded-[8px] border border-white/[0.08] shadow-sm flex items-center gap-2`}>
                                {isExternalNews ? <Globe className={`w-3.5 h-3.5 ${sourceStyling.text}`} /> : <Activity className="w-3.5 h-3.5 text-[#4285F4]" />}
@@ -408,30 +470,32 @@ const FeedItem = React.memo(({ item }: { item: FeedCard }) => {
                            )}
                        </div>
                        
-                       {/* Deep Link to Live Terminal */}
+                       {/* Launch Matrix Button */}
                        {item.live_game_id && (
-                           <div className="relative z-30 pointer-events-auto">
-                               <button 
-                                   onClick={(e) => { e.preventDefault(); e.stopPropagation(); navigate(`/live/${item.live_game_id}`); }}
-                                   className="hidden sm:flex items-center gap-2 bg-[#4285F4]/10 hover:bg-[#4285F4]/20 text-[#4285F4] border border-[#4285F4]/30 px-3 py-1.5 rounded-[8px] text-[10px] font-mono font-bold uppercase tracking-widest transition-colors shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-white/30 cursor-pointer"
-                               >
-                                   <TerminalSquare className="w-3.5 h-3.5" /> Launch Matrix
-                               </button>
-                           </div>
+                           <button 
+                               onClick={(e) => { 
+                                   e.preventDefault(); 
+                                   e.stopPropagation(); 
+                                   navigate(`/live/${item.live_game_id}`); 
+                               }}
+                               className="hidden sm:flex items-center gap-2 bg-[#4285F4]/10 hover:bg-[#4285F4]/20 text-[#4285F4] border border-[#4285F4]/30 px-3 py-1.5 rounded-[8px] text-[10px] font-mono font-bold uppercase tracking-widest transition-colors shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-white/30 cursor-pointer"
+                           >
+                               <TerminalSquare className="w-3.5 h-3.5" /> Launch Matrix
+                           </button>
                        )}
                    </div>
                    
                    <h4 className="text-[26px] sm:text-[32px] font-medium text-white/95 leading-[1.2] mb-4 tracking-tight group-hover:text-white transition-colors duration-500 drop-shadow-sm">{item.headline}</h4>
                    <p className="text-[15px] sm:text-[17px] text-neutral-400 leading-[1.75] line-clamp-3 mb-8 font-serif tracking-[-0.01em]">{item.summary}</p>
 
-                   {/* Kalshi Injection Preview */}
+                   {/* Prediction Market Preview */}
                    {isPredictionMarket && item.metadata?.kalshi_market_injected && (
-                       <div className="mt-2 mb-6 p-6 rounded-[24px] bg-[#0A0A0C] border border-white/[0.04] transition-colors relative overflow-hidden group-hover:bg-[#111113] font-sans shadow-inner pointer-events-auto">
+                       <div className="mt-2 mb-6 p-6 rounded-[24px] bg-[#0A0A0C] border border-white/[0.04] transition-colors relative overflow-hidden group-hover:bg-[#111113] font-sans shadow-inner">
                             <div className="flex items-center gap-2 mb-5 relative z-10 select-none">
                                 <span className="text-[#34C759] text-[9px] font-bold font-mono uppercase tracking-widest inline-flex items-center gap-1.5 bg-[#34C759]/10 px-2.5 py-1 rounded-[6px] border border-[#34C759]/20">
-                                    <Activity className="w-3 h-3 text-[#34C759]" /> Live Market
+                                    <Activity className="w-3.5 h-3.5 text-[#34C759]" /> Live Market
                                 </span>
-                                <span className="text-white/10 mx-1">•</span><span className="text-[10px] text-neutral-500 font-mono uppercase tracking-widest font-bold">Prediction Edge</span>
+                                <span className="text-white/10 mx-1">•</span><span className="text-[9px] text-neutral-500 font-mono uppercase tracking-widest font-bold">Prediction Edge</span>
                             </div>
                             <h4 className="text-[15px] font-medium text-white/90 leading-snug mb-5 tracking-tight pr-4 relative z-10 line-clamp-2">{item.metadata.kalshi_title || 'Related Market Prediction'}</h4>
                             <div className="flex items-center justify-between gap-4 relative z-10 select-none">
@@ -447,7 +511,7 @@ const FeedItem = React.memo(({ item }: { item: FeedCard }) => {
                             </div>
                        </div>
                    )}
-                   <div className="mt-2 flex items-center justify-between pt-6 border-t border-white/[0.04] font-sans pointer-events-auto">
+                   <div className="mt-2 flex items-center justify-between pt-6 border-t border-white/[0.04] font-sans">
                        <div className="flex items-center gap-2 text-[10px] font-mono font-bold text-neutral-500 uppercase tracking-widest select-none tabular-nums lining-nums">
                            <span>{item.source || 'Aura Protocol'}</span>
                            {publishedDate && <><span className="text-neutral-700">•</span><time dateTime={new Date(item.publishedAt).toISOString()}>{publishedDate}</time></>}
@@ -455,7 +519,7 @@ const FeedItem = React.memo(({ item }: { item: FeedCard }) => {
                    </div>
                 </div>
             </div>
-            </motion.div>
+        </motion.div>
     );
 });
 FeedItem.displayName = 'FeedItem';
@@ -515,6 +579,7 @@ function ChatInterface({
 }) {
   const [prompt, setPrompt] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loadingState, setLoadingState] = useState<'synthesizing' | 'analyzing'>('synthesizing');
   const endRef = useRef<HTMLDivElement>(null);
   
   // URL synced state
@@ -529,8 +594,45 @@ function ChatInterface({
   const [isDragging, setIsDragging] = useState(false);
   const [viewedDocument, setViewedDocument] = useState<DriveDocumentData | null>(null); 
 
+  const chatContainerRef = useRef<HTMLElement>(null);
+  const [showScrollButton, setShowScrollButton] = useState(false);
+
+  // High-precision scroll tracking
+  const handleScroll = () => {
+    if (!chatContainerRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = chatContainerRef.current;
+    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+    setShowScrollButton(distanceFromBottom > 300);
+  };
+
+  const scrollToBottom = () => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTo({
+        top: chatContainerRef.current.scrollHeight,
+        behavior: 'smooth'
+      });
+    } else {
+      endRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
+
+  const getMessageText = (msg: AuraChatMessage) => {
+    if (msg.content) return msg.content;
+    const sysArt = msg.artifacts?.find(a => a.type === 'SYSTEM_MESSAGE' || a.type === 'WORK_ARTIFACT');
+    return sysArt?.context_summary || '';
+  };
+
   useEffect(() => {
-      const timer = setTimeout(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, 150);
+      const timer = setTimeout(() => {
+          if (chatContainerRef.current) {
+              chatContainerRef.current.scrollTo({
+                  top: chatContainerRef.current.scrollHeight,
+                  behavior: 'smooth'
+              });
+          } else {
+              endRef.current?.scrollIntoView({ behavior: 'smooth' });
+          }
+      }, 150);
       return () => clearTimeout(timer);
   }, [messages, loading]);
 
@@ -556,14 +658,43 @@ function ChatInterface({
   const clearAttachment = () => { setSelectedImage(null); setSelectedMime(null); if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl); setImagePreviewUrl(null); };
 
   const handleQuery = async (eOrPreset?: React.FormEvent | string, contextData?: DriveDocumentData) => {
-    // Strictly prevent native HTML form routing/reloading
     if (eOrPreset && typeof eOrPreset !== 'string' && 'preventDefault' in eOrPreset) {
         eOrPreset.preventDefault();
     }
     
-    const activePrompt = typeof eOrPreset === 'string' ? eOrPreset : prompt;
-    if ((!activePrompt.trim() && !selectedImage && !contextData) || loading) return;
+    let rawPrompt = typeof eOrPreset === 'string' ? eOrPreset : prompt;
+
+    // Sanitize tokenizer state leaks
+    if (rawPrompt.toLowerCase().includes('intent:')) {
+        const segments = rawPrompt.split(/intent:/i);
+        rawPrompt = segments[segments.length - 1].trim(); 
+    }
+
+    const activePrompt = rawPrompt.trim();
+    if ((!activePrompt && !selectedImage && !contextData) || loading) return;
+
+    // Fast-Pass 1: Conversational Greetings (Zero LLM Latency)
+    if (CONVERSATIONAL_GREETINGS.test(activePrompt) && !selectedImage && !contextData) {
+        clearAttachment(); setPrompt('');
+        setMessages(prev => [
+            ...prev, 
+            { id: generateId('usr'), role: 'user', content: activePrompt },
+            { id: generateId('mod'), role: 'model', artifacts: [{ id: generateId('sys'), type: 'SYSTEM_MESSAGE', resolution_state: 'CONVERSATIONAL', context_summary: "Hello. Substrate Node online. Ready for execution." }] }
+        ]);
+        return;
+    }
+
+    // Fast-Pass 2: Code Structure Interceptor
+    const isCode = isStructuralCode(activePrompt);
+    let routedDomain = activeSubdomain as string;
     
+    if (isCode) {
+        routedDomain = "coding"; 
+        setLoadingState('analyzing');
+    } else {
+        setLoadingState('synthesizing');
+    }
+
     const userMessageImg = imagePreviewUrl || undefined;
     const sendImg = selectedImage; const sendMime = selectedMime;
 
@@ -571,31 +702,38 @@ function ChatInterface({
     setMessages(prev => [...prev, { id: generateId('usr'), role: 'user', content: activePrompt || (contextData ? `Analyze document: ${contextData.name}` : "Analyze asset"), image: userMessageImg }]);
     setLoading(true); setPrompt('');
 
-    // ============================================================================
-    // FRONTEND HEURISTIC INJECTOR (Zero Mock Data)
-    // Ensures the LLM has Live Feed Context to answer "best bets" queries
-    // ============================================================================
+    // System Routing & Temporal Anchor Mapping
     let injectedPrompt = activePrompt;
     const lowerPrompt = activePrompt.toLowerCase();
-    if (lowerPrompt.includes('best bet') || lowerPrompt.includes('tomorrow') || lowerPrompt.includes('market') || lowerPrompt.includes('edge') || lowerPrompt.includes('query analysis')) {
+    
+    if (isCode || lowerPrompt.match(/write a script|refactor|audit|regex|typescript|python|code/)) {
+        routedDomain = "coding";
+        injectedPrompt = `[SYSTEM_ROUTING_OVERRIDE: Route to CodingAgent. Perform static analysis, execute architectural audit, and provide elite software engineering feedback. Return analysis wrapped in a CODE_ANALYSIS_ARTIFACT.]\n\n${injectedPrompt}`;
+    } 
+    else if (lowerPrompt.match(/best bet|tomorrow|tomrrow|tonight|today|edge|matrix|live|slate|prediction|market|query analysis/)) {
         try {
             const liveData = globalFeedCache || await fetchGlobalFeed();
             if (liveData && liveData.length > 0) {
-                const summarizedFeed = liveData.slice(0, 4).map(f => ({ 
-                    event: f.headline, 
-                    insight: f.summary, 
-                }));
-                injectedPrompt += `\n\n<SYSTEM_CONTEXT>\nYou are a live quantitative betting assistant. Based on the user's request, analyze these currently active high-value market discrepancies from the Aura Substrate: ${JSON.stringify(summarizedFeed)}. Provide a confident, data-driven recommendation.</SYSTEM_CONTEXT>`;
+                const summarizedFeed = liveData.slice(0, 5).map(f => ({ event: f.headline, insight: f.summary }));
+                const userTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+                const localTime = new Date().toLocaleString("en-US", { timeZone: userTz });
+                
+                injectedPrompt += `\n\n[SYSTEM_CONTEXT: CLIENT_TIMEZONE is ${userTz}. CLIENT_LOCAL_TIME is ${localTime}. CRITICAL DIRECTIVE: The user is asking for actionable market analysis. DO NOT ATTEMPT TO ROUTE TO A TOOL. Force conversational generation. Synthesize a recommendation based on this active Substrate telemetry: ${JSON.stringify(summarizedFeed)} ]`;
             }
         } catch (e) {
             console.warn("[AURA:INTERCEPTOR] Failed to inject feed context", e);
         }
+    } 
+    else {
+        const userTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const localTime = new Date().toLocaleString("en-US", { timeZone: userTz });
+        injectedPrompt = `[SYSTEM_TEMPORAL_ANCHOR: Current User Time is ${localTime} (${userTz}). Strictly resolve relative dates ("today", "tomorrow", "tonight") against this local time. Do NOT use UTC server time.]\n\n${injectedPrompt}`;
     }
 
     const history: AuraHistoryMessage[] = messages.reduce<AuraHistoryMessage[]>((acc, m) => {
        if (m.role === 'user' && m.content) acc.push({ role: 'user', content: m.content });
        else if (m.role === 'model' && m.artifacts) {
-           const sysMsg = m.artifacts.find(a => a.type === 'SYSTEM_MESSAGE')?.context_summary;
+           const sysMsg = m.artifacts.find(a => a.type === 'SYSTEM_MESSAGE' || a.type === 'CODE_ANALYSIS_ARTIFACT' as any)?.context_summary;
            if (sysMsg) acc.push({ role: 'model', content: sysMsg });
        }
        return acc;
@@ -604,7 +742,7 @@ function ChatInterface({
     const messagePayload: any = { 
         message: injectedPrompt, 
         history, 
-        domain: activeSubdomain, 
+        domain: routedDomain, 
         image: sendImg, 
         imageMime: sendMime,
         client_context: {
@@ -621,7 +759,6 @@ function ChatInterface({
         const headers: Record<string, string> = { 'Content-Type': 'application/json' };
         if (token) headers['Authorization'] = `Bearer ${token}`;
         
-        // Production Fetch -> Backend handles MCP tools
         const response = await fetch('/api/chat', { method: 'POST', headers, body: JSON.stringify(messagePayload) });
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         if (!response.body) throw new Error("ReadableStream not supported");
@@ -660,6 +797,50 @@ function ChatInterface({
   };
 
   const renderArtifact = useCallback((artifact: AuraArtifact) => {
+      // THE CODING AGENT RENDERER (Institutional IDE Implementation)
+      if (artifact.type === 'CODE_ANALYSIS_ARTIFACT' as any) {
+          const analysisData = artifact.data?.static_analysis;
+          const errorCount = analysisData?.errors || 0;
+          const warningCount = analysisData?.warnings || 0;
+          const isClean = errorCount === 0;
+
+          return (
+              <div key={artifact.id} className="w-full mb-6 font-sans group relative text-left">
+                  <div className="absolute top-0 right-0 sm:-mr-12 opacity-0 group-hover:opacity-100 transition-opacity z-10 hidden sm:block mt-2">
+                      <MessageCopyButton text={artifact.context_summary || ''} />
+                  </div>
+                  
+                  {/* Institutional Static Analysis Telemetry Banner */}
+                  {analysisData && (
+                      <div className="flex flex-wrap items-center gap-3 sm:gap-4 px-5 py-3.5 bg-[#0A0A0C] border border-white/[0.08] rounded-t-[16px] border-b-0 text-[10px] font-mono text-neutral-400 select-none shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
+                          <span className="flex items-center gap-2 font-bold uppercase tracking-widest text-white/90">
+                              <TerminalSquare className="w-3.5 h-3.5 text-[#4285F4]" /> Static Analysis
+                          </span>
+                          <span className="text-white/[0.08] hidden sm:inline">|</span>
+                          <span className={`flex items-center gap-1.5 font-bold uppercase tracking-widest ${!isClean ? 'text-[#FF3B30]' : 'text-[#34C759]'}`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${!isClean ? 'bg-[#FF3B30] shadow-[0_0_8px_rgba(255,59,48,0.8)] animate-pulse' : 'bg-[#34C759]'}`} />
+                              Errors: {errorCount}
+                          </span>
+                          <span className="text-white/[0.08]">|</span>
+                          <span className={`font-bold uppercase tracking-widest ${warningCount > 0 ? 'text-[#FF9500]' : ''}`}>
+                              Warnings: {warningCount}
+                          </span>
+                          <span className="text-white/[0.08] hidden sm:inline">|</span>
+                          <span className="font-bold uppercase tracking-widest hidden sm:inline">
+                              Complexity: {analysisData.cognitive_complexity || 'Optimal'}
+                          </span>
+                      </div>
+                  )}
+                  
+                  <div className={`bg-[#050505] p-6 sm:p-8 border border-white/[0.08] shadow-[0_12px_40px_rgba(0,0,0,0.4)] text-[16px] text-white/95 leading-[1.65] font-sans antialiased font-normal max-w-none w-full ${analysisData ? 'rounded-b-[16px] rounded-t-none border-t-white/[0.02]' : 'rounded-[16px]'}`}>
+                      <Markdown remarkPlugins={CHAT_REMARK_PLUGINS} components={CHAT_MARKDOWN_COMPONENTS}>
+                          {artifact.context_summary || ''}
+                      </Markdown>
+                  </div>
+              </div>
+          );
+      }
+
       switch (artifact.resolution_state) {
           case 'GROUNDING_FAULT':
               return (
@@ -710,14 +891,11 @@ function ChatInterface({
       }
 
       if ((artifact.type === 'SYSTEM_MESSAGE' || artifact.type === 'WORK_ARTIFACT') && (artifact.resolution_state === 'CONVERSATIONAL' || artifact.resolution_state === 'LIVE_DATA')) {
-          if (artifact.type === 'DRIVE_DOC_ARTIFACT' && artifact.data) setViewedDocument(artifact.data);
-          else if (viewedDocument && artifact.type !== 'DRIVE_DOC_ARTIFACT') setViewedDocument(null); 
+          if ((artifact.type as any) === 'DRIVE_DOC_ARTIFACT' && artifact.data) setViewedDocument(artifact.data);
+          else if (viewedDocument && (artifact.type as any) !== 'DRIVE_DOC_ARTIFACT') setViewedDocument(null); 
 
           return (
               <div key={artifact.id} className="bg-transparent mb-6 flex flex-col w-full text-left font-sans group relative" aria-live="polite">
-                  <div className="absolute top-0 right-0 sm:-mr-12 opacity-0 group-hover:opacity-100 transition-opacity z-10 hidden sm:block">
-                      <MessageCopyButton text={artifact.context_summary || ''} />
-                  </div>
                   <div className="text-[16px] text-white/95 leading-[1.65] font-sans antialiased font-normal max-w-none">
                       <Markdown remarkPlugins={CHAT_REMARK_PLUGINS} components={CHAT_MARKDOWN_COMPONENTS}>
                           {artifact.context_summary || ''}
@@ -734,7 +912,11 @@ function ChatInterface({
   return (
     <>
       <SEO title="Aura | Substrate Interface" canonicalPath="/" />
-      <main className={`flex-1 overflow-y-auto p-4 sm:p-6 ${activeSubdomain === 'kalshi' ? 'max-w-6xl' : 'max-w-[760px]'} mx-auto w-full flex flex-col pt-6 pb-[180px] sm:pb-[200px] relative z-10 scroll-smooth [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden`}>
+      <main 
+        ref={chatContainerRef} 
+        onScroll={handleScroll} 
+        className={`flex-1 overflow-y-auto p-4 sm:p-6 ${activeSubdomain === 'kalshi' ? 'max-w-6xl' : 'max-w-[760px]'} mx-auto w-full flex flex-col pt-6 pb-[180px] sm:pb-[200px] relative z-10 scroll-smooth [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden`}
+      >
           
           {/* APP LAUNCHER */}
           {messages.length === 0 && !loading && (
@@ -797,17 +979,27 @@ function ChatInterface({
                                      </div>
                                  </div>
                              ) : (
-                                 <div className="w-full flex flex-col items-start max-w-full">
-                                     {/* Render raw conversational text from the model properly */}
-                                     {msg.content && !msg.artifacts?.length && (
-                                          <div className="text-[16px] text-white/95 leading-[1.65] font-sans antialiased font-normal max-w-none w-full mb-4">
-                                              <Markdown remarkPlugins={CHAT_REMARK_PLUGINS} components={CHAT_MARKDOWN_COMPONENTS}>
-                                                  {msg.content}
-                                              </Markdown>
+                                  <div className="w-full flex flex-col items-start max-w-full group relative">
+                                      {/* Render raw conversational text from the model properly */}
+                                      {msg.content && !msg.artifacts?.length && (
+                                           <div className="text-[16px] text-white/95 leading-[1.65] font-sans antialiased font-normal max-w-none w-full mb-4">
+                                               <Markdown remarkPlugins={CHAT_REMARK_PLUGINS} components={CHAT_MARKDOWN_COMPONENTS}>
+                                                   {msg.content}
+                                               </Markdown>
+                                           </div>
+                                      )}
+                                      
+                                      {msg.artifacts?.map(renderArtifact)}
+
+                                      {/* Elegant Copy-to-Clipboard Button at the footer of completed response */}
+                                      {!loading && getMessageText(msg) && (
+                                          <div className="w-full flex justify-end items-center mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                                              <span className="text-[9px] font-mono tracking-widest text-neutral-600 mr-2 uppercase select-none font-bold">
+                                                  Aura Substrate
+                                              </span>
+                                              <CopyButton textToCopy={getMessageText(msg)} />
                                           </div>
-                                     )}
-                                     
-                                     {msg.artifacts?.map(renderArtifact)}
+                                      )}
                                      
                                      {/* Contextual Action Chips */}
                                      {(idx === messages.length - 1 && !loading) && msg.artifacts?.some(a => a.type === 'BETTING_ANALYSIS' || a.type === 'SPORTS_ARTIFACT') && (
@@ -833,7 +1025,7 @@ function ChatInterface({
           {loading && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.4 }} className="flex items-center justify-center mt-8 mb-4 gap-3 text-neutral-500 text-[10px] font-mono tracking-widest uppercase select-none font-bold" aria-live="polite" aria-busy="true">
                  <motion.span animate={{ opacity: [0.2, 1, 0.2] }} transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }} className="w-2 h-2 bg-[#4285F4] rounded-full" />
-                 <span className="tracking-widest">Synthesizing</span>
+                 <span className="tracking-widest">{loadingState === 'analyzing' ? 'Analyzing' : 'Synthesizing'}</span>
               </motion.div>
           )}
       </main>
@@ -841,6 +1033,26 @@ function ChatInterface({
       {/* Input Bar */}
       <div className="fixed bottom-0 w-full p-4 sm:p-6 pb-[calc(env(safe-area-inset-bottom,24px)+16px)] sm:pb-10 bg-gradient-to-t from-[#000000] via-[#000000]/95 to-transparent pointer-events-none z-50 transform-gpu">
          
+         {/* Floating Scroll-to-Bottom (Jump) Button */}
+         <div className="max-w-[760px] mx-auto relative h-0 w-full pointer-events-none">
+             <AnimatePresence>
+                 {showScrollButton && (
+                     <motion.button
+                         key="jump-to-bottom"
+                         initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                         animate={{ opacity: 1, y: 0, scale: 1 }}
+                         exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                         transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+                         onClick={scrollToBottom}
+                         className="absolute bottom-24 right-4 sm:right-8 z-50 flex h-10 w-10 items-center justify-center rounded-full border border-white/[0.08] bg-neutral-900/90 text-neutral-400 backdrop-blur-md shadow-lg hover:bg-neutral-800 hover:text-white active:scale-95 transition-all duration-200 transform-gpu focus:outline-none focus:ring-2 focus:ring-blue-500/40 pointer-events-auto cursor-pointer"
+                         aria-label="Jump to latest message"
+                     >
+                         <ArrowDown size={16} strokeWidth={2.5} className="animate-bounce" style={{ animationDuration: '2s' }} />
+                     </motion.button>
+                 )}
+             </AnimatePresence>
+         </div>
+
          {/* Contextual Suggestion Chips */}
          {messages.length === 0 && !loading && (
              <div className="max-w-[760px] mx-auto flex flex-wrap gap-2 mb-4 justify-center pointer-events-auto px-4">
@@ -1186,7 +1398,7 @@ export default function App() {
                 <Route path="/story/:id" element={<CanonicalEntityPage />} />
                 <Route path="/team/:slug" element={<TeamCanonicalPage />} />
                 <Route path="/category/:category" element={<CategoryHubPage />} />
-                <Route path="/live/:gameId" element={<LiveTerminalRoute token={token} />} />
+                <Route path="/live/:gameId" element={<LiveTerminalRoute />} />
             </Routes>
           </AuthContext.Provider>
       </div>

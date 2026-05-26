@@ -1,89 +1,153 @@
 import { AuraAgent, RouteContext, AgentResponse } from './types';
+import { SportsAgent } from './sports/sports-agent';
+import { DeepResearchAgent } from './research/deep-research-agent';
+import { WorkspaceAgent } from './workspace/workspace-agent';
+import { MarketsAgent } from './markets/markets-agent';
+import { LiveInGameAgent } from './sports/live-in-game-agent';
 
 export class RegistryRouter {
   private agents: Map<string, AuraAgent> = new Map();
-  private defaultAgentId: string = 'sports-agent'; // Using sports as default for now
+  private defaultAgentId: string = 'general-agent';
 
-  public registerAgent(agent: AuraAgent) {
-    this.agents.set(agent.id, agent);
-    console.log(`[AURA:REGISTRY] Agent registered: ${agent.name} (ID: ${agent.id})`);
+  constructor(customAgents?: AuraAgent[], defaultAgentId?: string) {
+    if (customAgents) {
+      for (const agent of customAgents) {
+        this.agents.set(agent.id, agent);
+      }
+    } else {
+      this.agents.set('sports-agent', new SportsAgent());
+      this.agents.set('deep-research-agent', new DeepResearchAgent());
+      this.agents.set('workspace-agent', new WorkspaceAgent());
+      this.agents.set('markets-agent', new MarketsAgent());
+      this.agents.set('live-in-game-agent', new LiveInGameAgent());
+    }
+    if (defaultAgentId) {
+      this.defaultAgentId = defaultAgentId;
+    }
   }
 
   public async route(
-    query: string, 
-    context: RouteContext = { depth: 0, maxDepth: 3, visitedAgents: [], originalQuery: query }
+    query: string,
+    context: RouteContext,
+    onToken?: (token: string) => void
   ): Promise<AgentResponse> {
-    
-    // 1. CIRCUIT BREAKER: Prevent infinite recursion
-    if (context.depth >= context.maxDepth) {
-      console.warn(`[Registry] Circuit breaker tripped! Max routing depth (${context.maxDepth}) reached for query: "${query}"`);
-      return this.fallbackRoute(query, "Max routing depth exceeded. System prevented a routing loop.");
+    const depth = context.depth || 0;
+    const maxDepth = context.maxDepth || 3;
+
+    if (depth >= maxDepth) {
+      console.warn(`[RegistryRouter] Max routing depth (${maxDepth}) exceeded. Falling back to default.`);
+      return this.executeDefault(query, context, onToken);
     }
 
-    console.log(`[Registry] Routing iteration ${context.depth}. Visited so far: ${JSON.stringify(context.visitedAgents)}`);
+    const enrichedContext: RouteContext = {
+      ...context,
+      depth,
+      maxDepth,
+      visitedAgents: context.visitedAgents || [],
+      originalQuery: context.originalQuery || query,
+      onToken: onToken || context.onToken,
+      payloadCarrier: context.payloadCarrier || {}
+    };
+
+    const eligibleAgents = Array.from(this.agents.entries())
+      .filter(([id]) => !enrichedContext.visitedAgents.includes(id));
+
+    if (eligibleAgents.length === 0) {
+      console.warn('[RegistryRouter] No eligible agents remaining. Executing fallback.');
+      return this.executeDefault(query, enrichedContext, onToken);
+    }
+
+    console.log(`[RegistryRouter] Executing parallelized bidding across ${eligibleAgents.length} agents...`);
+    const biddingResults = await Promise.all(
+      eligibleAgents.map(async ([id, agent]) => {
+        try {
+          const confidence = await agent.getRouteConfidence(query, enrichedContext);
+          return { id, agent, confidence };
+        } catch (err) {
+          console.error(`[RegistryRouter] Confidence evaluation failed for agent [${id}]:`, err);
+          return { id, agent, confidence: -1 };
+        }
+      })
+    );
 
     let bestAgent: AuraAgent | null = null;
     let highestConfidence = -1;
 
-    // 2. BIDDING WAR: Evaluate confidence scores, excluding already visited agents
-    for (const [id, agent] of this.agents.entries()) {
-      if (context.visitedAgents.includes(id)) {
-        continue; 
-      }
-
-      try {
-        const confidence = await agent.getRouteConfidence(query, context);
-        if (confidence > highestConfidence) {
-          highestConfidence = confidence;
-          bestAgent = agent;
+    for (const result of biddingResults) {
+      if (result.confidence > highestConfidence) {
+        highestConfidence = result.confidence;
+        bestAgent = result.agent;
+      } else if (result.confidence === highestConfidence && highestConfidence > 0) {
+        if (enrichedContext.domain && result.id.includes(enrichedContext.domain)) {
+          bestAgent = result.agent;
         }
-      } catch (err) {
-        console.error(`[Registry] Error getting confidence from agent ${id}:`, err);
       }
     }
 
-    // 3. NO CONFIDENT AGENT FOUND: Fallback
-    const CONFIDENCE_THRESHOLD = 0.4;
-    if (!bestAgent || highestConfidence < CONFIDENCE_THRESHOLD) {
-      console.log(`[Registry] Low confidence score (${highestConfidence || 'N/A'}). Routing to fallback.`);
-      return this.fallbackRoute(query, "No agent met the confidence threshold.");
+    if (!bestAgent || highestConfidence <= 0.1) {
+      console.log(`[RegistryRouter] Low confidence match (${highestConfidence}). Routing to default.`);
+      const defaultAgent = this.agents.get(this.defaultAgentId);
+      if (defaultAgent && !enrichedContext.visitedAgents.includes(this.defaultAgentId)) {
+        bestAgent = defaultAgent;
+      } else {
+        return this.executeDefault(query, enrichedContext, onToken);
+      }
     }
 
-    // 4. EXECUTION
-    const updatedContext: RouteContext = {
-      ...context,
-      depth: context.depth + 1,
-      visitedAgents: [...context.visitedAgents, bestAgent.id]
-    };
+    console.log(`[RegistryRouter] Routing to [${bestAgent.id}] with confidence ${highestConfidence}`);
+    enrichedContext.visitedAgents.push(bestAgent.id);
 
+    let response: AgentResponse;
     try {
-      console.log(`[Registry] Dispatching to Agent: ${bestAgent.name} (Confidence: ${highestConfidence})`);
-      const response = await bestAgent.handle(query, updatedContext);
+      response = await Promise.race([
+        bestAgent.execute(query, enrichedContext),
+        new Promise<AgentResponse>((_, reject) => 
+           setTimeout(() => reject(new Error(`Agent [${bestAgent!.id}] execution timed out`)), 15000)
+        )
+      ]);
+    } catch (err) {
+      console.error(`[RegistryRouter] Execution crashed on agent [${bestAgent.id}]:`, err);
+      return this.handleExecutionFailure(query, enrichedContext, bestAgent.id, onToken);
+    }
 
-      // 5. HANDOFF HANDLING
-      if (response.handoffTo && !updatedContext.visitedAgents.includes(response.handoffTo)) {
-        console.log(`[Registry] Agent ${bestAgent.id} requested handoff to ${response.handoffTo}`);
-        return this.route(query, {
-          ...updatedContext,
-          visitedAgents: [...updatedContext.visitedAgents, bestAgent.id]
-        });
+    if (response.handoffTo) {
+      const targetAgentId = response.handoffTo;
+      if (enrichedContext.visitedAgents.includes(targetAgentId)) {
+        console.warn(`[RegistryRouter] Circular handoff detected to [${targetAgentId}]. Breaking loop.`);
+        return response;
       }
 
-      return response;
-    } catch (error) {
-      console.error(`[Registry] Execution failed on agent ${bestAgent.id}. Attempting next best agent...`);
-      return this.route(query, updatedContext);
+      console.log(`[RegistryRouter] Handing off execution from [${bestAgent.id}] -> [${targetAgentId}]`);
+      const handoffContext: RouteContext = {
+        ...enrichedContext,
+        depth: enrichedContext.depth + 1,
+        payloadCarrier: {
+          ...enrichedContext.payloadCarrier,
+          ...response.handoffPayload
+        }
+      };
+      return this.route(query, handoffContext, onToken);
     }
+
+    return response;
   }
 
-  private async fallbackRoute(query: string, reason: string): Promise<AgentResponse> {
-    const generalist = this.agents.get(this.defaultAgentId);
-    if (generalist) {
-      return generalist.handle(query);
+  private async executeDefault(query: string, context: RouteContext, onToken?: (token: string) => void): Promise<AgentResponse> {
+    const defaultAgent = this.agents.get(this.defaultAgentId);
+    if (!defaultAgent) throw new Error(`[RegistryRouter] Fatal: Default agent [${this.defaultAgentId}] is not registered.`);
+    return defaultAgent.execute(query, context);
+  }
+
+  private async handleExecutionFailure(query: string, context: RouteContext, failedAgentId: string, onToken?: (token: string) => void): Promise<AgentResponse> {
+    if (failedAgentId !== 'deep-research-agent' && this.agents.has('deep-research-agent')) {
+      console.log(`[RegistryRouter] Execution failed for [${failedAgentId}]. Initiating Deep Research fallback.`);
+      const fallbackContext: RouteContext = {
+        ...context,
+        depth: context.depth + 1,
+        visitedAgents: [...(context.visitedAgents || []), failedAgentId]
+      };
+      return this.route(query, fallbackContext, onToken);
     }
-    return {
-      success: false,
-      output: `System Error: Unable to process query. ${reason}`
-    };
+    return this.executeDefault(query, context, onToken);
   }
 }

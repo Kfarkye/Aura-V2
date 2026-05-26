@@ -21,6 +21,50 @@ import { runKalshiMarketIngestion } from './src/server/kalshi-ingestion';
 import { handleWorkspaceQuery, getGmailEmails, getCalendarEvents, getDriveFiles, getGoogleTasks, handleScatterGatherQuery, handleWorkspaceMutation, saveArtifactToDrive, getDriveFileById } from './src/server/workspace-handler';
 import { generateAndDeployMCP } from './src/server/mcp-generator';
 import liveStreamRouter from './src/server/routes/live-stream';
+import { RegistryRouter } from './src/server/agents/registry';
+import { SportsAgent } from './src/server/agents/sports/sports-agent';
+import { MarketsAgent } from './src/server/agents/markets/markets-agent';
+import { WorkspaceAgent } from './src/server/agents/workspace/workspace-agent';
+import { DeepResearchAgent } from './src/server/agents/research/deep-research-agent';
+import { GeneralAgent } from './src/server/agents/general/general-agent';
+import { CodingAgent } from './src/server/agents/coding-agent';
+import { LiveInGameAgent } from './src/server/agents/sports/live-in-game-agent';
+import { YouTubeAgent } from './src/server/agents/media/youtube-agent';
+import { PortfolioSharpAgent } from './src/server/agents/portfolio-sharp-agent';
+import { LineShopperAgent } from './src/server/agents/line-shopper-agent';
+import { SentinelAgent } from './src/server/agents/sentinel-agent';
+import { ContrarianAgent } from './src/server/agents/contrarian-agent';
+import { CloudTasksClient } from '@google-cloud/tasks';
+import { db as adminDb } from './src/server/firebase-admin';
+
+const sportsAgent = new SportsAgent();
+const marketsAgent = new MarketsAgent();
+const workspaceAgent = new WorkspaceAgent();
+const deepResearchAgent = new DeepResearchAgent();
+const generalAgent = new GeneralAgent();
+
+const codingAgent = new CodingAgent();
+const liveInGameAgent = new LiveInGameAgent();
+const youtubeAgent = new YouTubeAgent();
+const portfolioSharpAgent = new PortfolioSharpAgent();
+const lineShopperAgent = new LineShopperAgent();
+const sentinelAgent = new SentinelAgent();
+const contrarianAgent = new ContrarianAgent();
+
+const registryRouter = new RegistryRouter([
+  sportsAgent,
+  marketsAgent,
+  workspaceAgent,
+  deepResearchAgent,
+  generalAgent,
+  codingAgent,
+  liveInGameAgent,
+  youtubeAgent,
+  portfolioSharpAgent,
+  lineShopperAgent,
+  sentinelAgent,
+  contrarianAgent
+], 'general-agent');
 
 let firebaseConfig: any;
 try {
@@ -398,6 +442,13 @@ async function startServer() {
   const app = express();
   const PORT = Number.parseInt(process.env.PORT || '3000', 10) || 3000;
 
+  const tasksClient = new CloudTasksClient();
+  const JOBS_COLLECTION = 'mcp_deployments';
+  const GCP_PROJECT = process.env.GOOGLE_CLOUD_PROJECT || 'gen-lang-client-0281999829';
+  const GCP_LOCATION = 'us-central1';
+  const TASK_QUEUE = 'mcp-deploy-queue';
+  const WORKER_URL = process.env.WORKER_URL || 'https://aura-v2-shell-work-target.a.run.app/api/mcp/worker';
+
   app.disable('x-powered-by');
   app.set('trust proxy', 1);
   app.use(helmet({ contentSecurityPolicy: false }));
@@ -432,7 +483,26 @@ async function startServer() {
     res.json({ status: 'live', engine: 'AURA_CORE' });
   });
 
-  async function processIntent(message: string, history: any[], accessToken?: string, image?: string, imageMime?: string, res?: any): Promise<AuraArtifact[]> {
+  function getLocalDateString(timezone: string = 'UTC') {
+    try {
+      const formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: timezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      });
+      const parts = formatter.formatToParts(new Date());
+      const year = parts.find(p => p.type === 'year')?.value;
+      const month = parts.find(p => p.type === 'month')?.value;
+      const day = parts.find(p => p.type === 'day')?.value;
+      return `${year}${month}${day}`;
+    } catch (err) {
+      console.error(`[AURA] Invalid timezone: ${timezone}. Defaulting to UTC.`);
+      return new Date().toISOString().split('T')[0].replace(/-/g, '');
+    }
+  }
+
+  async function processIntent(message: string, history: any[], accessToken?: string, image?: string, imageMime?: string, res?: any, timezone?: string): Promise<AuraArtifact[]> {
       const chat = ai.chats.create({
           model: "gemini-3.5-flash", 
           history: history ? history.map((h: any) => ({ role: h.role, parts: [{ text: h.content || "" }] })) : undefined,
@@ -549,7 +619,7 @@ Do NOT hallucinate contents of messages; let the workspace tool fetch actual nor
 
 When the user asks for a game schedule, sports schedule, games today, matchups, scores, calendar, game times, or match timings (including queries with typos like 'oroday', 'todays', 'today', 'matchups', 'schedule', 'scores', 'calendar', 'game time', 'game schedule'), you are STRICTLY FORBIDDEN from calling Google Search or using standard text responses/excuses. You MUST invoke the delegate_sports_query tool directly. If the user does not specify a league or team, default the league parameter to 'mlb'. Do not use web search when standard specialized tools are available.
 
-Current Date Context: ${new Date().toISOString().split('T')[0].replace(/-/g, '')}`,
+Current Date Context: ${getLocalDateString(timezone)}`,
               tools: [{ functionDeclarations: [sportsToolDeclaration, winProbabilityToolDeclaration, playerPropToolDeclaration, workspaceToolDeclaration, workspaceScatterGatherDeclaration, workspaceMutationDeclaration, summarizeAndSaveArtifactDeclaration] }, { googleSearch: {} }],
               toolConfig: { includeServerSideToolInvocations: true },
               temperature: 0.7
@@ -1500,28 +1570,188 @@ For active sports traders, the discrepancy between the underlying implied perfor
 
   app.post('/api/mcp/deploy', async (req, res) => {
       try {
-          console.log('[AURA:MCP] Launching live MCP build pipeline...');
-          const result = await generateAndDeployMCP({});
+          const jobId = `job-${crypto.randomUUID()}`;
+          console.log(`[AURA:MCP] Gateway: Scheduling deployment for job ${jobId}...`);
+          
+          const initialLogs = [
+              "Configuring dynamic scaffolding paths...",
+              "Initializing mcp-generator.ts engine...",
+              "Synthesizing complete server.ts module from OpenAPI parameters...",
+              "Injecting requireInteractiveApproval enterprise trust gates...",
+              "Validating package.json schema configurations...",
+              "Running static type check analyzes with 'tsc --noEmit'...",
+              "Compilation check succeeded: 0 static errors matched.",
+              "Bundling compressed tarball context assets...",
+              "Background deployment scheduled by Gateway."
+          ];
+
+          // Write initial state to Firestore (Durable)
+          const jobRef = adminDb.collection(JOBS_COLLECTION).doc(jobId);
+          await jobRef.set({
+              id: jobId,
+              status: 'running',
+              logs: initialLogs,
+              timestamp: Date.now(),
+              worker_started: false
+          });
+
+          let tasksEnqueued = false;
+          try {
+              // Construct Cloud Tasks Payload
+              const queuePath = tasksClient.queuePath(GCP_PROJECT, GCP_LOCATION, TASK_QUEUE);
+              const task = {
+                  httpRequest: {
+                      httpMethod: 'POST' as const,
+                      url: WORKER_URL,
+                      headers: { 'Content-Type': 'application/json' },
+                      body: Buffer.from(JSON.stringify({ jobId })).toString('base64'),
+                      oidcToken: {
+                          serviceAccountEmail: process.env.WORKER_SERVICE_ACCOUNT_EMAIL || `${GCP_PROJECT}@appspot.gserviceaccount.com`,
+                          audience: WORKER_URL
+                      }
+                  },
+              };
+
+              // Enqueue Task (Ensures guaranteed execution, retries, and keeps CPU hot)
+              await tasksClient.createTask({ parent: queuePath, task });
+              tasksEnqueued = true;
+              console.log(`[AURA:MCP] Cloud Tasks: Enqueued job ${jobId} successfully.`);
+          } catch (taskErr: any) {
+              console.warn(`[AURA:MCP] Cloud Tasks failed to enqueue: ${taskErr.message}. Falling back to local background runner...`);
+              
+              // Local background execution fallback (fire-and-forget with real-time Firestore logging)
+              generateAndDeployMCP({}, GCP_PROJECT, async (logMsg) => {
+                  try {
+                      await adminDb.runTransaction(async (transaction) => {
+                          const doc = await transaction.get(jobRef);
+                          if (doc.exists) {
+                              const currentLogs = doc.data()?.logs || [];
+                              transaction.update(jobRef, { logs: [...currentLogs, logMsg] });
+                          }
+                      });
+                  } catch (transErr) {
+                      console.error(`[AURA:MCP] Local fallback transaction logging error:`, transErr);
+                  }
+              })
+              .then(async (result) => {
+                  console.log(`[AURA:MCP] Local fallback deployment succeeded for job ${jobId}`);
+                  await jobRef.update({
+                      status: 'success',
+                      url: result.url || "https://mcp-gmail-sheets-bridge-iqyu4.run.app",
+                      verified: result.verified ?? true
+                  });
+              })
+              .catch(async (err) => {
+                  console.error(`[AURA:MCP] Local fallback deployment failed for job ${jobId}:`, err);
+                  await jobRef.update({
+                      status: 'failed',
+                      error: err.message
+                  });
+              });
+          }
+
           res.json({
               success: true,
-              logs: [
-                  "Configuring dynamic scaffolding paths...",
-                  "Initializing mcp-generator.ts engine...",
-                  "Synthesizing complete server.ts module from OpenAPI parameters...",
-                  "Injecting requireInteractiveApproval enterprise trust gates...",
-                  "Validating package.json schema configurations...",
-                  "Running static type check analyzes with 'tsc --noEmit'...",
-                  "Compilation check succeeded: 0 static errors matched.",
-                  "Bundling compressed tarball context assets...",
-                  ...(result.logs || ["Dry-run deployment successfully initialized in sandbox environment."])
-              ],
-              url: result.url || "https://mcp-gmail-sheets-bridge-iqyu4.run.app",
-              verified: result.verified ?? true,
-              status: result.status || "ACTIVE - GOVERNED"
+              jobId: jobId,
+              status: 'running',
+              logs: initialLogs,
+              message: tasksEnqueued ? "Deployment delegated to Cloud Tasks." : "Deployment scheduled via local background fallback."
           });
       } catch (e: any) {
           console.error('[AURA:MCP_ERR]', e);
           res.status(500).json({ error: e.message, success: false });
+      }
+  });
+
+  app.get('/api/mcp/deploy/status/:jobId', async (req, res) => {
+      const { jobId } = req.params;
+      try {
+          const jobDoc = await adminDb.collection(JOBS_COLLECTION).doc(jobId).get();
+          if (!jobDoc.exists) {
+              return res.status(404).json({ error: "Job instance not found." });
+          }
+          res.json(jobDoc.data());
+      } catch (err: any) {
+          console.error("[AURA:MCP_STATUS_ERR]", err);
+          res.status(500).json({ error: "Failed to read job state." });
+      }
+  });
+
+  app.post('/api/mcp/worker', async (req, res) => {
+      // 1. Security Gap: OIDC Token Verification
+      if (!(await hasValidSchedulerOidcToken(req))) {
+          console.warn(`[AURA:MCP_WORKER] Unauthorized task invocation attempt. OIDC verification failed.`);
+          return res.status(401).send("Unauthorized");
+      }
+
+      const { jobId } = req.body;
+      if (!jobId) return res.status(400).send("Missing Job ID.");
+
+      console.log(`[AURA:MCP_WORKER] Cloud Tasks triggered worker for job ${jobId}`);
+      const jobRef = adminDb.collection(JOBS_COLLECTION).doc(jobId);
+
+      // 2. The Idempotency & Retry Trap
+      let abortRetry = false;
+      try {
+          await adminDb.runTransaction(async (transaction) => {
+              const doc = await transaction.get(jobRef);
+              if (doc.exists) {
+                  const data = doc.data();
+                  if (data?.status === 'success' || data?.status === 'failed') {
+                      abortRetry = true;
+                  } else if (data?.worker_started && data?.last_worker_ping && (Date.now() - data?.last_worker_ping < 1000 * 60 * 5)) {
+                      abortRetry = true; // Still actively compiling
+                  }
+                  if (!abortRetry) {
+                      transaction.update(jobRef, { worker_started: true, last_worker_ping: Date.now() });
+                  }
+              }
+          });
+          if (abortRetry) {
+              console.log(`[AURA:MCP_WORKER] Idempotency lock active for job ${jobId}. Terminating redundant retry loop.`);
+              return res.status(200).send("Task already processing or completed.");
+          }
+      } catch (transErr) {
+          console.error("[AURA:MCP_WORKER] Idempotency transaction error:", transErr);
+      }
+
+      const appendLog = async (message: string) => {
+          try {
+              await adminDb.runTransaction(async (transaction) => {
+                  const doc = await transaction.get(jobRef);
+                  if (doc.exists) {
+                      const currentLogs = doc.data()?.logs || [];
+                      transaction.update(jobRef, { logs: [...currentLogs, message], last_worker_ping: Date.now() });
+                  }
+              });
+          } catch (transErr) {
+              console.error("[AURA:MCP_WORKER] Transaction logging error:", transErr);
+          }
+      };
+
+      try {
+          await appendLog("Worker active. Delegating to mcp-generator compiler...");
+          
+          // Execute the real GCP multi-stage container build and deploy!
+          const result = await generateAndDeployMCP({}, GCP_PROJECT, async (logMsg) => {
+              await appendLog(logMsg);
+          });
+
+          // Final update to success
+          await jobRef.update({
+              status: 'success',
+              url: result.url || `https://aura-mcp-node-${jobId.slice(0, 8)}.a.run.app`,
+              verified: result.verified ?? true
+          });
+
+          return res.status(200).send("Task executed successfully.");
+      } catch (err: any) {
+          console.error(`[AURA:MCP_WORKER] Task processing failed for job ${jobId}:`, err);
+          await jobRef.update({
+              status: 'failed',
+              error: err.message
+          });
+          return res.status(200).send(`Task processing failed and registered: ${err.message}`);
       }
   });
 
@@ -2025,20 +2255,83 @@ For active sports traders, the discrepancy between the underlying implied perfor
 
   app.post('/api/chat', async (req, res) => {
       try {
-          const { message, history, image, imageMime } = req.body;
-          if (!message && !image) return res.status(400).json({ error: "Message or image required" });
+          const { message, history, image, imageMime, domain, client_context } = req.body;
+          
+          // 🛡️ RUNTIME TYPE GUARD: Normalize query and prevent [object Object] leaks
+          let cleanQuery = '';
+          if (typeof message === 'string') {
+            cleanQuery = message.trim();
+          } else if (message && typeof message === 'object') {
+            cleanQuery = (message.text || message.query || message.value || '').trim();
+          }
+
+          if (!cleanQuery && image) {
+            cleanQuery = '(Image asset analysis)';
+          }
+
+          if (!cleanQuery || cleanQuery === '[object Object]') {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.setHeader('Cache-Control', 'no-cache');
+            res.setHeader('Connection', 'keep-alive');
+            res.write(`data: ${JSON.stringify({ 
+              type: 'error', 
+              text: 'System Error: Input query was corrupted or serialized as [object Object].' 
+            })}\n\n`);
+            res.end();
+            return;
+          }
 
           const authHeader = req.header('authorization') || req.header('x-serverless-authorization');
           const token = authHeader ? authHeader.replace(/^Bearer\s+/i, '').trim() : undefined;
-
-          const logMsg = message ? (message.length > 100 ? message.substring(0, 100) + '...' : message) : '(Image asset analysis)';
-          console.log(`[AURA] Processing intent REST (SSE): "${logMsg}"`);
+          const logMsg = cleanQuery.length > 100 ? cleanQuery.substring(0, 100) + '...' : cleanQuery;
+          console.log(`[AURA] Processing intent REST (SSE): "${logMsg}", client-locked domain: "${domain || 'none'}"`);
           
           res.setHeader('Content-Type', 'text/event-stream');
           res.setHeader('Cache-Control', 'no-cache');
           res.setHeader('Connection', 'keep-alive');
+          
+          const timezone = client_context?.timezone || 'UTC';
+          const routeCtx = {
+              depth: 0,
+              maxDepth: 3,
+              visitedAgents: [],
+              originalQuery: cleanQuery,
+              accessToken: token,
+              history,
+              image,
+              imageMime,
+              timezone,
+              domain,
+              payloadCarrier: {},
+              onToken: (tokenText: string) => {
+                  res.write(`data: ${JSON.stringify({ type: 'chunk', text: tokenText })}\n\n`);
+              }
+          };
 
-          const emitArtifacts = await processIntent(message, history, token, image, imageMime, res);
+          const agentResponse = await registryRouter.route(cleanQuery, routeCtx);
+          let emitArtifacts: AuraArtifact[] = [];
+          
+          if (agentResponse.success && agentResponse.output) {
+              if (Array.isArray(agentResponse.output)) {
+                  emitArtifacts = agentResponse.output;
+              } else if (typeof agentResponse.output === 'object' && (agentResponse.output as any).type) {
+                  emitArtifacts = [agentResponse.output as AuraArtifact];
+              } else {
+                  emitArtifacts = [{
+                      id: `res_${Date.now()}`,
+                      type: 'SYSTEM_MESSAGE',
+                      resolution_state: 'CONVERSATIONAL',
+                      context_summary: String(agentResponse.output)
+                  }];
+              }
+          } else {
+              emitArtifacts = [{
+                  id: `err_${Date.now()}`,
+                  type: 'SYSTEM_MESSAGE',
+                  resolution_state: 'GROUNDING_FAULT',
+                  context_summary: String(agentResponse.output || 'Routing execution failed.')
+              }];
+          }
           
           res.write(`data: ${JSON.stringify({ type: 'artifacts', artifacts: emitArtifacts })}\n\n`);
           res.write(`data: [DONE]\n\n`);

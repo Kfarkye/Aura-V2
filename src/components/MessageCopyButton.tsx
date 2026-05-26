@@ -1,23 +1,39 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Copy, Check } from 'lucide-react';
 
-export function MessageCopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = React.useState(false);
+export const CopyButton = ({ textToCopy }: { textToCopy: string }) => {
+  const [copied, setCopied] = useState(false);
 
-  const copyToClipboard = () => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const handleCopy = async (e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent triggering parent card click handlers
+    if (!textToCopy) return;
+
+    try {
+      await navigator.clipboard.writeText(textToCopy);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000); // Reset state after 2 seconds
+    } catch (err) {
+      console.error('[AURA:CLIPBOARD] Copy failed:', err);
+    }
   };
 
   return (
     <button
-      onClick={copyToClipboard}
-      className="p-1.5 rounded-full hover:bg-white/[0.08] text-neutral-500 hover:text-white transition-colors outline-none"
-      title="Copy message"
-      aria-label="Copy message"
+      onClick={handleCopy}
+      className="inline-flex h-7 w-7 items-center justify-center rounded-[6px] border border-white/[0.04] bg-neutral-950 text-neutral-500 hover:border-white/[0.08] hover:bg-neutral-900 hover:text-neutral-300 transition-all duration-200 active:scale-95 focus:outline-none focus:ring-2 focus:ring-blue-500/40 shrink-0"
+      title="Copy response to clipboard"
+      type="button"
     >
-      {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+      {copied ? (
+        <Check size={13} strokeWidth={3} className="text-emerald-400 animate-scale-up" />
+      ) : (
+        <Copy size={13} strokeWidth={2.5} />
+      )}
     </button>
   );
+};
+
+// Backward-compatible wrapper for MessageCopyButton
+export function MessageCopyButton({ text }: { text: string }) {
+  return <CopyButton textToCopy={text} />;
 }
