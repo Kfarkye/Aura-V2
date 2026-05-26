@@ -4,6 +4,40 @@ import { deepResearchAgent } from './research/deep-research-agent';
 import { workspaceAgent } from './workspace/workspace-agent';
 import { marketsAgent } from './markets/markets-agent';
 
+const CONVERSATIONAL_REGEX = /^(hello|hi|hey|yo|good\s+morning|good\s+afternoon|good\s+evening|greetings|howdy)\b[\s?!.,]*$/i;
+const STRUCTURAL_CODE_REGEX = /```[\s\S]*?```|\b(import\s+.*\s+from\s+['"].*['"]|const\s+.*\s+=\s+.*=>|function\s+\w+\s*\(|class\s+\w+|export\s+(default\s+)?(class|const|function|interface|type))\b/;
+
+export function preProcessAndRoute(query: string): {
+  type: 'conversational' | 'code_audit' | 'semantic_fallback';
+  sanitizedInput: string;
+} {
+  const trimmed = query.trim();
+  
+  if (CONVERSATIONAL_REGEX.test(trimmed)) {
+    return { type: 'conversational', sanitizedInput: trimmed };
+  }
+  
+  if (STRUCTURAL_CODE_REGEX.test(trimmed)) {
+    let sanitized = trimmed;
+    let index = 0;
+    sanitized = sanitized.replace(/```[\s\S]*?```/g, () => {
+      const placeholder = `[CODE_BLOCK_PLACEHOLDER_${index}]`;
+      index++;
+      return placeholder;
+    });
+    return { type: 'code_audit', sanitizedInput: sanitized };
+  }
+  
+  let sanitized = trimmed;
+  let index = 0;
+  sanitized = sanitized.replace(/```[\s\S]*?```/g, () => {
+    const placeholder = `[CODE_BLOCK_PLACEHOLDER_${index}]`;
+    index++;
+    return placeholder;
+  });
+  return { type: 'semantic_fallback', sanitizedInput: sanitized };
+}
+
 export class RegistryRouter {
   private agents: Map<string, AuraAgent> = new Map();
   private defaultAgentId: string = 'sports-agent';
@@ -67,10 +101,36 @@ export class RegistryRouter {
       return this.fallbackRoute(query, "Max routing depth exceeded. System prevented a routing loop.", enrichedContext);
     }
 
+    // 1.5 PRE-PROCESS & DIRECT ROUTE
+    const decision = enrichedContext.depth === 0 ? preProcessAndRoute(query) : { type: 'semantic_fallback' as const, sanitizedInput: query };
+
+    if (enrichedContext.depth === 0) {
+      if (decision.type === 'conversational') {
+        cleanupTimer();
+        return {
+          success: true,
+          output: "Hello! I am Aura, your agentic workspace and research assistant. How can I help you today?"
+        };
+      } else if (decision.type === 'code_audit') {
+        console.log(`[Registry] Pre-processing identified code_audit. Routing directly to deep-research-agent.`);
+        const targetAgent = this.agents.get('deep-research-agent');
+        if (targetAgent) {
+          cleanupTimer();
+          const updatedContext: RouteContext = {
+            ...enrichedContext,
+            depth: enrichedContext.depth + 1,
+            visitedAgents: [...enrichedContext.visitedAgents, 'deep-research-agent']
+          };
+          return targetAgent.handle(query, updatedContext);
+        }
+      }
+    }
+
     console.log(`[Registry] Routing iteration ${enrichedContext.depth}. Visited so far: ${JSON.stringify(enrichedContext.visitedAgents)}`);
     
     let bestAgent: AuraAgent | null = null;
     let highestConfidence = -1;
+    const biddingQuery = decision.sanitizedInput;
 
     // 2. BIDDING WAR: Evaluate confidence scores, excluding already visited agents
     for (const [id, agent] of this.agents.entries()) {
@@ -78,7 +138,7 @@ export class RegistryRouter {
         continue;
       }
       try {
-        const confidence = await agent.getRouteConfidence(query, enrichedContext);
+        const confidence = await agent.getRouteConfidence(biddingQuery, enrichedContext);
         if (confidence > highestConfidence) {
           highestConfidence = confidence;
           bestAgent = agent;

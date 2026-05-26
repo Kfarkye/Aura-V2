@@ -3,8 +3,10 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   Cloud, Mail, Calendar, FileText, CheckSquare, 
   ChevronRight, ArrowRight, Activity, Eye, Code, Fingerprint, ShieldCheck,
-  RefreshCw, ExternalLink, Lock
+  RefreshCw, ExternalLink, Lock, Play, Terminal, Check, AlertTriangle
 } from 'lucide-react';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db } from '../firebase';
 
 // ============================================================================
 // Types & Interfaces
@@ -48,7 +50,10 @@ export function WorkspaceOrchestrationBlueprint({ user, token, onSignIn, onSignO
   const [isCompiling, setIsCompiling] = useState<boolean>(false);
   const [logs, setLogs] = useState<string[]>([]);
   const [deployUrl, setDeployUrl] = useState<string | null>(null);
-  const pollIntervalRef = useRef<any>(null);
+  const [currentJobId, setCurrentJobId] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const logEndRef = useRef<HTMLDivElement>(null);
+  const unsubscribeRef = useRef<(() => void) | null>(null);
 
   // Live Sandbox Feed state
   const [liveSource, setLiveSource] = useState<'GMAIL' | 'CALENDAR' | 'DRIVE' | 'TASKS'>('GMAIL');
@@ -58,8 +63,8 @@ export function WorkspaceOrchestrationBlueprint({ user, token, onSignIn, onSignO
 
   useEffect(() => {
     return () => {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current();
       }
     };
   }, []);
@@ -99,7 +104,14 @@ export function WorkspaceOrchestrationBlueprint({ user, token, onSignIn, onSignO
     if (isCompiling || !interactiveApproved) return;
     setIsCompiling(true);
     setDeployUrl(null);
+    setCurrentJobId(null);
+    setErrorMsg(null);
     setLogs([`Authenticating...`, `Synthesizing logic...`]);
+
+    if (unsubscribeRef.current) {
+        unsubscribeRef.current();
+        unsubscribeRef.current = null;
+    }
 
     try {
       const response = await fetch('/api/mcp/deploy', {
@@ -112,55 +124,69 @@ export function WorkspaceOrchestrationBlueprint({ user, token, onSignIn, onSignO
 
       if (data.jobId) {
         const jobId = data.jobId;
-        setLogs(prev => [...prev, `GCP build pipeline queued successfully with job ID: ${jobId}`, `Streaming build output logs...`]);
+        setCurrentJobId(jobId);
+        setLogs(prev => [...prev, `GCP build pipeline queued successfully with job ID: ${jobId}`, `Connecting to real-time build stream...`]);
 
-        pollIntervalRef.current = setInterval(async () => {
-          try {
-            const statusRes = await fetch(`/api/mcp/deploy/status/${jobId}`);
-            if (!statusRes.ok) {
-              if (pollIntervalRef.current) {
-                clearInterval(pollIntervalRef.current);
-                pollIntervalRef.current = null;
-              }
-              setIsCompiling(false);
-              setLogs(prev => [...prev, `Error checking deployment status.`]);
-              return;
-            }
-            const statusData = await statusRes.json();
-            
-            if (statusData.logs) {
-              setLogs(statusData.logs);
-            }
+        // Firestore Real-Time Listener
+        const jobRef = doc(db, 'mcp_deployments', jobId);
+        unsubscribeRef.current = onSnapshot(jobRef, (snapshot) => {
+            if (snapshot.exists()) {
+                const statusData = snapshot.data();
+                
+                if (statusData.logs) {
+                    setLogs(statusData.logs);
+                }
 
-            if (statusData.status === 'success') {
-              if (pollIntervalRef.current) {
-                clearInterval(pollIntervalRef.current);
-                pollIntervalRef.current = null;
-              }
-              setIsCompiling(false);
-              if (statusData.url) setDeployUrl(statusData.url);
-            } else if (statusData.status === 'deployment_error' || statusData.status === 'failed') {
-              if (pollIntervalRef.current) {
-                clearInterval(pollIntervalRef.current);
-                pollIntervalRef.current = null;
-              }
-              setIsCompiling(false);
-              setLogs(prev => [...prev, `Deployment failed: ${statusData.error || 'Unknown Cloud Run error'}`]);
+                if (statusData.status === 'success') {
+                    setIsCompiling(false);
+                    if (statusData.url) setDeployUrl(statusData.url);
+                    if (unsubscribeRef.current) {
+                        unsubscribeRef.current();
+                        unsubscribeRef.current = null;
+                    }
+                } else if (statusData.status === 'deployment_error' || statusData.status === 'failed') {
+                    setIsCompiling(false);
+                    setErrorMsg(statusData.error || 'Unknown Cloud Run error');
+                    setLogs(prev => [...prev, `Deployment failed: ${statusData.error || 'Unknown Cloud Run error'}`]);
+                    if (unsubscribeRef.current) {
+                        unsubscribeRef.current();
+                        unsubscribeRef.current = null;
+                    }
+                }
             }
-          } catch (pollErr: any) {
-            console.error("Polling error:", pollErr);
-          }
-        }, 3000);
+        }, (error) => {
+            console.error("Firestore onSnapshot error:", error);
+            setIsCompiling(false);
+            setErrorMsg("Lost connection to build stream.");
+            if (unsubscribeRef.current) unsubscribeRef.current();
+        });
+
       } else {
         setLogs(prev => [...prev, ...(data.logs || [`Verified. Server active.`])]);
         if (data.url) setDeployUrl(data.url);
         setIsCompiling(false);
       }
     } catch (error: any) {
+      setErrorMsg(error.message);
       setLogs(prev => [...prev, `Notice: ${error.message}`]);
       setIsCompiling(false);
     }
   };
+
+  // Smart Auto-Scroll Logic
+  useEffect(() => {
+      if (logEndRef.current) {
+          const parent = logEndRef.current.parentElement;
+          if (parent) {
+              const isNearBottom = parent.scrollHeight - parent.scrollTop - parent.clientHeight < 100;
+              if (isNearBottom) {
+                  logEndRef.current.scrollIntoView({ behavior: 'smooth' });
+              }
+          } else {
+              logEndRef.current.scrollIntoView({ behavior: 'smooth' });
+          }
+      }
+  }, [logs]);
 
   return (
     <div className="w-full pt-8 pb-24 font-sans text-left max-w-4xl mx-auto selection:bg-white/20 selection:text-white">
@@ -261,18 +287,62 @@ export function WorkspaceOrchestrationBlueprint({ user, token, onSignIn, onSignO
                             isCompiling ? 'bg-white/10 text-white/40' : 'bg-white text-black hover:bg-neutral-200'
                           }`}
                         >
-                          {isCompiling ? 'Deploying...' : 'Deploy Authorized Service'}
+                          {isCompiling ? (
+                             <>
+                                <RefreshCw className="w-4 h-4 animate-spin" />
+                                Deploying Service...
+                             </>
+                          ) : (
+                             <>
+                                <Play className="w-4 h-4" />
+                                Deploy Authorized Service
+                             </>
+                          )}
                         </button>
                         
                         {logs.length > 0 && (
-                          <div className="mt-6 bg-black border border-white/[0.04] rounded-lg p-4">
-                            {logs.map((log, index) => (
-                              <div key={index} className="text-[12px] text-white/50 font-mono mb-1">{">"} {log}</div>
-                            ))}
-                            {deployUrl && (
-                              <a href={deployUrl} target="_blank" rel="noopener noreferrer" className="inline-block mt-2 text-white hover:underline font-mono text-[12px]">
-                                [Live URL ↗]
-                              </a>
+                          <div className="mt-6 bg-[#050505] border border-white/[0.04] rounded-lg p-5 overflow-hidden flex flex-col shadow-inner">
+                            <div className="flex items-center gap-2 mb-4 pb-3 border-b border-white/[0.04]">
+                                <Terminal className="w-4 h-4 text-white/50" />
+                                <span className="text-[11px] font-mono uppercase tracking-widest text-white/40 font-bold">Build Stream Console</span>
+                                {isCompiling && <span className="ml-auto flex h-2 w-2 relative">
+                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                                </span>}
+                            </div>
+                            <div className="max-h-[250px] overflow-y-auto pr-2 font-mono text-[12px] text-white/60 leading-relaxed scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent flex flex-col gap-1">
+                                {logs.map((log, index) => (
+                                  <div key={index} className="flex gap-3">
+                                      <span className="text-white/20 select-none">{(index + 1).toString().padStart(3, '0')}</span>
+                                      <span className={`${log.toLowerCase().includes('error') || log.toLowerCase().includes('fail') ? 'text-red-400' : log.toLowerCase().includes('success') ? 'text-emerald-400' : 'text-white/70'}`}>{log}</span>
+                                  </div>
+                                ))}
+                                <div ref={logEndRef} />
+                            </div>
+
+                            {/* Success Badge */}
+                            {deployUrl && !isCompiling && (
+                                <div className="mt-4 pt-4 border-t border-emerald-500/10 flex flex-col items-start gap-2">
+                                   <div className="flex items-center gap-2 px-3 py-1 rounded bg-[#34C759]/5 border border-[#34C759]/20 text-[#34C759]">
+                                      <Check className="w-3.5 h-3.5" />
+                                      <span className="text-[11px] font-bold uppercase tracking-wider">Service Online</span>
+                                   </div>
+                                   <a href={deployUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-[12px] text-white hover:text-emerald-400 transition-colors group px-1">
+                                      <span className="font-mono group-hover:underline">{deployUrl}</span>
+                                      <ExternalLink className="w-3.5 h-3.5" />
+                                   </a>
+                                </div>
+                            )}
+
+                            {/* Error Badge */}
+                            {errorMsg && !isCompiling && (
+                                <div className="mt-4 pt-4 border-t border-red-500/10 flex items-center gap-3">
+                                   <div className="flex items-center gap-2 px-3 py-1 rounded bg-[#FF3B30]/5 border border-[#FF3B30]/20 text-[#FF3B30]">
+                                      <AlertTriangle className="w-3.5 h-3.5" />
+                                      <span className="text-[11px] font-bold uppercase tracking-wider">Deployment Error</span>
+                                   </div>
+                                   <span className="text-[12px] text-red-400 font-mono truncate">{errorMsg}</span>
+                                </div>
                             )}
                           </div>
                         )}

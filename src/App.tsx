@@ -4,7 +4,7 @@ import {
     CloudFog, AlertCircle, ArrowLeft, Activity, Copy, Check, ExternalLink, Sparkles, Globe,
     Search, Send, ShieldCheck, Calendar as CalendarIcon, Camera, X, TrendingUp, Zap, Link as LinkIcon, ChevronRight,
     Bot, Filter, MessageSquare, PlusCircle, BookOpen, FileText, FileSpreadsheet, Lock, Clock, User as UserIcon,
-    ArrowDown, Terminal
+    ArrowDown, Terminal, TerminalSquare
 } from 'lucide-react'; 
 import Markdown, { Components } from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -83,7 +83,7 @@ const SafeImage = React.memo(({ src, alt, containerClassName, imageClassName, pr
 
     if (status === 'error' || !src) {
         return (
-            <div className={`bg-neutral-900 flex flex-col items-center justify-center border border-white/[0.04] ${containerClassName || ''}`} aria-hidden="true">
+            <div className={`bg-[#050505] flex flex-col items-center justify-center border border-white/[0.04] ${containerClassName || ''}`} aria-hidden="true">
                 <CloudFog className="w-5 h-5 text-neutral-800 mb-1.5" />
                 <span className="text-[9px] font-mono uppercase tracking-widest text-neutral-600 font-bold">Asset Offline</span>
             </div>
@@ -91,9 +91,9 @@ const SafeImage = React.memo(({ src, alt, containerClassName, imageClassName, pr
     }
 
     return (
-        <div className={`relative overflow-hidden bg-neutral-950 border border-white/[0.04] ${containerClassName || ''}`} aria-busy={status === 'loading'}>
+        <div className={`relative overflow-hidden bg-[#0A0A0C] border border-white/[0.04] ${containerClassName || ''}`} aria-busy={status === 'loading'}>
             {status === 'loading' && (
-                <div className="absolute inset-0 bg-neutral-900 overflow-hidden pointer-events-none z-10" aria-hidden="true">
+                <div className="absolute inset-0 bg-[#050505] overflow-hidden pointer-events-none z-10" aria-hidden="true">
                     <motion.div 
                         className="absolute inset-0 w-[200%] h-full bg-gradient-to-r from-transparent via-white/[0.03] to-transparent -skew-x-12"
                         animate={{ x: ['-100%', '100%'] }}
@@ -113,7 +113,6 @@ const SafeImage = React.memo(({ src, alt, containerClassName, imageClassName, pr
                 loading={priority ? "eager" : "lazy"} 
                 decoding="async"
             />
-            {/* Ambient Vignette Mask for Text Readability */}
             <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_30%,rgba(0,0,0,0.6)_100%)] pointer-events-none mix-blend-multiply opacity-60 z-[5]" />
         </div>
     );
@@ -245,7 +244,7 @@ const EDITORIAL_MARKDOWN_COMPONENTS: Components = {
     blockquote: ({node, ...props}) => <blockquote className="border-l-[4px] border-[#4285F4] pl-6 sm:pl-8 my-12 py-5 italic text-[24px] sm:text-[26px] font-serif text-neutral-400 leading-[1.45] tracking-tight bg-gradient-to-r from-[#4285F4]/10 to-transparent rounded-r-3xl shadow-sm" {...props} />,
     ul: ({node, ...props}) => <ul className="list-none space-y-4 mt-6 mb-10 text-[#D4D4D4] font-serif text-[19px] sm:text-[20px]" {...props} />,
     ol: ({node, ...props}) => <ol className="list-decimal pl-6 mt-6 mb-10 space-y-4 text-[#D4D4D4] font-serif text-[19px] sm:text-[20px] tabular-nums lining-nums marker:text-neutral-500 marker:font-sans" {...props} />,
-    li: ({node, ...props}) => <li className="relative pl-8 before:absolute before:left-0 before:top-[0.65em] before:w-[4px] before:h-[1px] before:bg-neutral-600 leading-[1.85]" {...props} />,
+    li: ({node, ...props}) => <li className="relative pl-8 before:absolute before:left-0 before:top-[0.65em] before:w-[4px] before:h-[1px] before:bg-[#4285F4] leading-[1.85]" {...props} />,
     strong: ({node, ...props}) => <strong className="font-semibold text-white/95" {...props} />,
     hr: ({node, ...props}) => <hr className="my-16 border-t border-white/[0.08]" {...props} />,
 };
@@ -342,7 +341,7 @@ const useStoryData = (id?: string) => {
 
 // ============================================================================
 // Feed Components
-// ============================================================================
+// ===========================================================================
 const FeedItem = React.memo(({ item }: { item: FeedCard }) => {
     const navigate = useNavigate();
     const destinationUrl = `/story/${item.slug || item.id}`;
@@ -360,9 +359,22 @@ const FeedItem = React.memo(({ item }: { item: FeedCard }) => {
     const isPredictionMarket = item.type === 'PREDICTION_MARKET';
     const isAuraEditorial = item.type === 'EDITORIAL';
 
-    const cardVariants = {
-        hover: { y: -4, scale: 1.005 },
-        tap: { scale: 0.98 }
+    // Accessible Event Delegation: Prevents Link Nesting violations
+    const handleCardClick = (e: React.MouseEvent) => {
+        const target = e.target as HTMLElement;
+        if (target.closest('button') || target.closest('a') || target.closest('input')) {
+            return;
+        }
+        navigate(destinationUrl);
+    };
+
+    const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+            const target = e.target as HTMLElement;
+            if (target.closest('button') || target.closest('a')) return;
+            e.preventDefault();
+            navigate(destinationUrl);
+        }
     };
 
     return (
@@ -370,32 +382,29 @@ const FeedItem = React.memo(({ item }: { item: FeedCard }) => {
            whileHover={{ y: -4, scale: 1.005 }}
            whileTap={{ scale: 0.98 }}
            transition={SPRING_TRANSITION}
-           className="relative block w-full mb-10 group"
+           onClick={handleCardClick}
+           onKeyDown={handleKeyDown}
+           tabIndex={0}
+           role="link"
+           aria-label={`Read full analysis: ${item.headline}`}
+           className="relative block w-full mb-10 group outline-none focus-visible:ring-2 focus-visible:ring-white/20 rounded-[32px] cursor-pointer"
         >
-            <Link 
-                to={destinationUrl}
-                className="absolute inset-0 z-10 rounded-[32px] outline-none focus-visible:ring-2 focus-visible:ring-white/20"
-                aria-label={`Read full analysis: ${item.headline}`}
-            />
-            
             <div className={`absolute inset-0 bg-gradient-to-r from-transparent via-transparent to-transparent ${isExternalNews ? sourceStyling.glow : 'group-hover:from-[#4285F4]/10'} rounded-[32px] blur-2xl transition-all duration-700 pointer-events-none -z-10 transform-gpu opacity-40`} />
             
-            <div className={`w-full relative bg-[#050505] border border-white/[0.04] rounded-[32px] overflow-hidden shadow-[0_12px_40px_rgba(0,0,0,0.3)] transition-colors duration-500 transform-gpu group-hover:bg-[#0A0A0C] pointer-events-none ${isExternalNews ? sourceStyling.hoverBorder : 'group-hover:border-[#4285F4]/50'}`}>
+            <div className={`w-full relative bg-[#050505] border border-white/[0.04] rounded-[32px] overflow-hidden shadow-[0_12px_40px_rgba(0,0,0,0.3)] transition-colors duration-500 transform-gpu group-hover:bg-[#0A0A0C] ${isExternalNews ? sourceStyling.hoverBorder : 'group-hover:border-[#4285F4]/50'}`}>
                 
                 {item.image_url && (
                     <div className="w-full aspect-[21/9] sm:aspect-[16/9] relative bg-[#0A0A0C] border-b border-white/[0.02] overflow-hidden pointer-events-none z-0">
                         <SafeImage 
-                            src={item.image_url} 
-                            alt={item.headline}
-                            containerClassName="absolute inset-0 border-none"
+                            src={item.image_url} alt={item.headline} containerClassName="absolute inset-0 border-none"
                             imageClassName={`opacity-80 group-hover:opacity-100 transition-all duration-700 scale-[1.01] group-hover:scale-[1.03] ${isAuraEditorial ? 'grayscale-[0.3] group-hover:grayscale-0' : 'grayscale-0'}`}
                         />
                         <div className="absolute inset-0 bg-gradient-to-t from-[#050505] via-[#050505]/30 to-transparent opacity-100" />
                     </div>
                 )}
 
-                <div className={`flex flex-col p-8 sm:p-10 relative z-20 pointer-events-none ${item.image_url ? '-mt-24' : ''}`}>
-                   <div className="flex items-center justify-between mb-6 select-none font-sans pointer-events-auto">
+                <div className={`flex flex-col p-8 sm:p-10 relative z-20 ${item.image_url ? '-mt-24' : ''}`}>
+                   <div className="flex items-center justify-between mb-6 select-none font-sans">
                        <div className="flex items-center gap-3">
                            <span className={`text-[10px] font-bold font-mono uppercase tracking-widest text-white/95 bg-[#000000]/80 backdrop-blur-md px-3 py-1.5 rounded-[8px] border border-white/[0.08] shadow-sm flex items-center gap-2`}>
                                {isExternalNews ? <Globe className={`w-3.5 h-3.5 ${sourceStyling.text}`} /> : <Activity className="w-3.5 h-3.5 text-[#4285F4]" />}
@@ -409,30 +418,32 @@ const FeedItem = React.memo(({ item }: { item: FeedCard }) => {
                            )}
                        </div>
                        
-                       {/* Deep Link to Live Terminal */}
+                       {/* Launch Matrix Button */}
                        {item.live_game_id && (
-                           <div className="relative z-30 pointer-events-auto">
-                               <button 
-                                   onClick={(e) => { e.preventDefault(); e.stopPropagation(); navigate(`/live/${item.live_game_id}`); }}
-                                   className="hidden sm:flex items-center gap-2 bg-[#4285F4]/10 hover:bg-[#4285F4]/20 text-[#4285F4] border border-[#4285F4]/30 px-3 py-1.5 rounded-[8px] text-[10px] font-mono font-bold uppercase tracking-widest transition-colors shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-white/30 cursor-pointer"
-                               >
-                                   <Terminal className="w-3.5 h-3.5" /> Launch Matrix
-                               </button>
-                           </div>
+                           <button 
+                               onClick={(e) => { 
+                                   e.preventDefault(); 
+                                   e.stopPropagation(); 
+                                   navigate(`/live/${item.live_game_id}`); 
+                               }}
+                               className="hidden sm:flex items-center gap-2 bg-[#4285F4]/10 hover:bg-[#4285F4]/20 text-[#4285F4] border border-[#4285F4]/30 px-3 py-1.5 rounded-[8px] text-[10px] font-mono font-bold uppercase tracking-widest transition-colors shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-white/30 cursor-pointer"
+                           >
+                               <TerminalSquare className="w-3.5 h-3.5" /> Launch Matrix
+                           </button>
                        )}
                    </div>
                    
                    <h4 className="text-[26px] sm:text-[32px] font-medium text-white/95 leading-[1.2] mb-4 tracking-tight group-hover:text-white transition-colors duration-500 drop-shadow-sm">{item.headline}</h4>
                    <p className="text-[15px] sm:text-[17px] text-neutral-400 leading-[1.75] line-clamp-3 mb-8 font-serif tracking-[-0.01em]">{item.summary}</p>
 
-                   {/* Kalshi Injection Preview */}
+                   {/* Prediction Market Preview */}
                    {isPredictionMarket && item.metadata?.kalshi_market_injected && (
-                       <div className="mt-2 mb-6 p-6 rounded-[24px] bg-[#0A0A0C] border border-white/[0.04] transition-colors relative overflow-hidden group-hover:bg-[#111113] font-sans shadow-inner pointer-events-auto">
+                       <div className="mt-2 mb-6 p-6 rounded-[24px] bg-[#0A0A0C] border border-white/[0.04] transition-colors relative overflow-hidden group-hover:bg-[#111113] font-sans shadow-inner">
                             <div className="flex items-center gap-2 mb-5 relative z-10 select-none">
                                 <span className="text-[#34C759] text-[9px] font-bold font-mono uppercase tracking-widest inline-flex items-center gap-1.5 bg-[#34C759]/10 px-2.5 py-1 rounded-[6px] border border-[#34C759]/20">
-                                    <Activity className="w-3 h-3 text-[#34C759]" /> Live Market
+                                    <Activity className="w-3.5 h-3.5 text-[#34C759]" /> Live Market
                                 </span>
-                                <span className="text-white/10 mx-1">•</span><span className="text-[10px] text-neutral-500 font-mono uppercase tracking-widest font-bold">Prediction Edge</span>
+                                <span className="text-white/10 mx-1">•</span><span className="text-[9px] text-neutral-500 font-mono uppercase tracking-widest font-bold">Prediction Edge</span>
                             </div>
                             <h4 className="text-[15px] font-medium text-white/90 leading-snug mb-5 tracking-tight pr-4 relative z-10 line-clamp-2">{item.metadata.kalshi_title || 'Related Market Prediction'}</h4>
                             <div className="flex items-center justify-between gap-4 relative z-10 select-none">
@@ -448,7 +459,7 @@ const FeedItem = React.memo(({ item }: { item: FeedCard }) => {
                             </div>
                        </div>
                    )}
-                   <div className="mt-2 flex items-center justify-between pt-6 border-t border-white/[0.04] font-sans pointer-events-auto">
+                   <div className="mt-2 flex items-center justify-between pt-6 border-t border-white/[0.04] font-sans">
                        <div className="flex items-center gap-2 text-[10px] font-mono font-bold text-neutral-500 uppercase tracking-widest select-none tabular-nums lining-nums">
                            <span>{item.source || 'Aura Protocol'}</span>
                            {publishedDate && <><span className="text-neutral-700">•</span><time dateTime={new Date(item.publishedAt).toISOString()}>{publishedDate}</time></>}
@@ -456,7 +467,7 @@ const FeedItem = React.memo(({ item }: { item: FeedCard }) => {
                    </div>
                 </div>
             </div>
-            </motion.div>
+        </motion.div>
     );
 });
 FeedItem.displayName = 'FeedItem';
