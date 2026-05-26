@@ -3,7 +3,7 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 # Install native compilation dependencies
-RUN apk add --no-cache python3 make g++ gcc libc-compat
+RUN apk add --no-cache python3 make g++ gcc libc6-compat
 
 COPY package*.json ./
 RUN npm ci

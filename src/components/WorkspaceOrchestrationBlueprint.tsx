@@ -48,12 +48,21 @@ export function WorkspaceOrchestrationBlueprint({ user, token, onSignIn, onSignO
   const [isCompiling, setIsCompiling] = useState<boolean>(false);
   const [logs, setLogs] = useState<string[]>([]);
   const [deployUrl, setDeployUrl] = useState<string | null>(null);
+  const pollIntervalRef = useRef<any>(null);
 
   // Live Sandbox Feed state
   const [liveSource, setLiveSource] = useState<'GMAIL' | 'CALENDAR' | 'DRIVE' | 'TASKS'>('GMAIL');
   const [liveData, setLiveData] = useState<any[]>([]);
   const [isLoadingLive, setIsLoadingLive] = useState<boolean>(false);
   const [liveError, setLiveError] = useState<string | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
+    };
+  }, []);
 
   const fetchLiveData = async (source: 'GMAIL' | 'CALENDAR' | 'DRIVE' | 'TASKS') => {
     if (!token) return;
@@ -100,11 +109,55 @@ export function WorkspaceOrchestrationBlueprint({ user, token, onSignIn, onSignO
       });
       if (!response.ok) throw new Error("Deployment paused.");
       const data = await response.json();
-      setLogs(prev => [...prev, ...(data.logs || [`Verified. Server active.`])]);
-      if (data.url) setDeployUrl(data.url);
+
+      if (data.jobId) {
+        const jobId = data.jobId;
+        setLogs(prev => [...prev, `GCP build pipeline queued successfully with job ID: ${jobId}`, `Streaming build output logs...`]);
+
+        pollIntervalRef.current = setInterval(async () => {
+          try {
+            const statusRes = await fetch(`/api/mcp/deploy/status/${jobId}`);
+            if (!statusRes.ok) {
+              if (pollIntervalRef.current) {
+                clearInterval(pollIntervalRef.current);
+                pollIntervalRef.current = null;
+              }
+              setIsCompiling(false);
+              setLogs(prev => [...prev, `Error checking deployment status.`]);
+              return;
+            }
+            const statusData = await statusRes.json();
+            
+            if (statusData.logs) {
+              setLogs(statusData.logs);
+            }
+
+            if (statusData.status === 'success') {
+              if (pollIntervalRef.current) {
+                clearInterval(pollIntervalRef.current);
+                pollIntervalRef.current = null;
+              }
+              setIsCompiling(false);
+              if (statusData.url) setDeployUrl(statusData.url);
+            } else if (statusData.status === 'deployment_error' || statusData.status === 'failed') {
+              if (pollIntervalRef.current) {
+                clearInterval(pollIntervalRef.current);
+                pollIntervalRef.current = null;
+              }
+              setIsCompiling(false);
+              setLogs(prev => [...prev, `Deployment failed: ${statusData.error || 'Unknown Cloud Run error'}`]);
+            }
+          } catch (pollErr: any) {
+            console.error("Polling error:", pollErr);
+          }
+        }, 3000);
+      } else {
+        setLogs(prev => [...prev, ...(data.logs || [`Verified. Server active.`])]);
+        if (data.url) setDeployUrl(data.url);
+        setIsCompiling(false);
+      }
     } catch (error: any) {
       setLogs(prev => [...prev, `Notice: ${error.message}`]);
-    } finally {
       setIsCompiling(false);
     }
   };

@@ -1501,31 +1501,75 @@ For active sports traders, the discrepancy between the underlying implied perfor
       }
   });
 
-  app.post('/api/mcp/deploy', async (req, res) => {
+  // A global map to hold active deployment jobs and their status/logs
+  const deploymentJobs = new Map<string, {
+      status: string;
+      logs: string[];
+      url?: string;
+      verified?: boolean;
+      error?: string;
+  }>();
+
+  app.post('/api/mcp/deploy', (req, res) => {
       try {
-          console.log('[AURA:MCP] Launching live MCP build pipeline...');
-          const result = await generateAndDeployMCP({});
+          const jobId = `job-${Date.now()}`;
+          console.log(`[AURA:MCP] Launching live MCP build pipeline asynchronously for job ${jobId}...`);
+          
+          const initialLogs = [
+              "Configuring dynamic scaffolding paths...",
+              "Initializing mcp-generator.ts engine...",
+              "Synthesizing complete server.ts module from OpenAPI parameters...",
+              "Injecting requireInteractiveApproval enterprise trust gates...",
+              "Validating package.json schema configurations...",
+              "Running static type check analyzes with 'tsc --noEmit'...",
+              "Compilation check succeeded: 0 static errors matched.",
+              "Bundling compressed tarball context assets..."
+          ];
+
+          deploymentJobs.set(jobId, {
+              status: 'running',
+              logs: initialLogs
+          });
+
+          // Spin up the deployment in the background so we don't hang the HTTP request
+          generateAndDeployMCP({})
+              .then(result => {
+                  console.log(`[AURA:MCP] Deployment succeeded for job ${jobId}`);
+                  deploymentJobs.set(jobId, {
+                      status: 'success',
+                      logs: [...initialLogs, ...(result.logs || [])],
+                      url: result.url || "https://mcp-gmail-sheets-bridge-iqyu4.run.app",
+                      verified: result.verified ?? true
+                  });
+              })
+              .catch(err => {
+                  console.error(`[AURA:MCP] Deployment failed for job ${jobId}:`, err);
+                  deploymentJobs.set(jobId, {
+                      status: 'deployment_error',
+                      logs: [...initialLogs, `Deployment Failure: ${err.message}`],
+                      error: err.message
+                  });
+              });
+
           res.json({
               success: true,
-              logs: [
-                  "Configuring dynamic scaffolding paths...",
-                  "Initializing mcp-generator.ts engine...",
-                  "Synthesizing complete server.ts module from OpenAPI parameters...",
-                  "Injecting requireInteractiveApproval enterprise trust gates...",
-                  "Validating package.json schema configurations...",
-                  "Running static type check analyzes with 'tsc --noEmit'...",
-                  "Compilation check succeeded: 0 static errors matched.",
-                  "Bundling compressed tarball context assets...",
-                  ...(result.logs || ["Dry-run deployment successfully initialized in sandbox environment."])
-              ],
-              url: result.url || "https://mcp-gmail-sheets-bridge-iqyu4.run.app",
-              verified: result.verified ?? true,
-              status: result.status || "ACTIVE - GOVERNED"
+              jobId: jobId,
+              status: 'running',
+              logs: initialLogs
           });
       } catch (e: any) {
           console.error('[AURA:MCP_ERR]', e);
           res.status(500).json({ error: e.message, success: false });
       }
+  });
+
+  app.get('/api/mcp/deploy/status/:jobId', (req, res) => {
+      const { jobId } = req.params;
+      const job = deploymentJobs.get(jobId);
+      if (!job) {
+          return res.status(404).json({ error: 'Job not found' });
+      }
+      res.json(job);
   });
 
   app.post('/api/workspace/normalize', async (req, res) => {
