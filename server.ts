@@ -21,6 +21,9 @@ import { runKalshiMarketIngestion } from './src/server/kalshi-ingestion';
 import { handleWorkspaceQuery, getGmailEmails, getCalendarEvents, getDriveFiles, getGoogleTasks, handleScatterGatherQuery, handleWorkspaceMutation, saveArtifactToDrive, getDriveFileById } from './src/server/workspace-handler';
 import { generateAndDeployMCP } from './src/server/mcp-generator';
 import liveStreamRouter from './src/server/routes/live-stream';
+import { RegistryRouter } from './src/server/agents/registry';
+
+const registryRouter = new RegistryRouter();
 
 let firebaseConfig: any;
 try {
@@ -2038,7 +2041,40 @@ For active sports traders, the discrepancy between the underlying implied perfor
           res.setHeader('Cache-Control', 'no-cache');
           res.setHeader('Connection', 'keep-alive');
 
-          const emitArtifacts = await processIntent(message, history, token, image, imageMime, res);
+          const routeCtx = {
+              depth: 0,
+              maxDepth: 3,
+              visitedAgents: [],
+              originalQuery: message,
+              accessToken: token,
+              history,
+              image,
+              imageMime
+          };
+          const agentResponse = await registryRouter.route(message, routeCtx);
+
+          let emitArtifacts: AuraArtifact[] = [];
+          if (agentResponse.success && agentResponse.output) {
+              if (Array.isArray(agentResponse.output)) {
+                  emitArtifacts = agentResponse.output;
+              } else if (typeof agentResponse.output === 'object' && (agentResponse.output as any).type) {
+                  emitArtifacts = [agentResponse.output as AuraArtifact];
+              } else {
+                  emitArtifacts = [{
+                      id: `res_${Date.now()}`,
+                      type: 'SYSTEM_MESSAGE',
+                      resolution_state: 'CONVERSATIONAL',
+                      context_summary: String(agentResponse.output)
+                  }];
+              }
+          } else {
+              emitArtifacts = [{
+                  id: `err_${Date.now()}`,
+                  type: 'SYSTEM_MESSAGE',
+                  resolution_state: 'GROUNDING_FAULT',
+                  context_summary: String(agentResponse.output || 'Routing execution failed.')
+              }];
+          }
           
           res.write(`data: ${JSON.stringify({ type: 'artifacts', artifacts: emitArtifacts })}\n\n`);
           res.write(`data: [DONE]\n\n`);

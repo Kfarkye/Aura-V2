@@ -1,8 +1,19 @@
 import { AuraAgent, RouteContext, AgentResponse } from './types';
+import { sportsAgent } from './sports/sports-agent';
+import { deepResearchAgent } from './research/deep-research-agent';
+import { workspaceAgent } from './workspace/workspace-agent';
+import { marketsAgent } from './markets/markets-agent';
 
 export class RegistryRouter {
   private agents: Map<string, AuraAgent> = new Map();
   private defaultAgentId: string = 'sports-agent'; // Using sports as default for now
+
+  constructor() {
+    this.registerAgent(sportsAgent);
+    this.registerAgent(deepResearchAgent);
+    this.registerAgent(workspaceAgent);
+    this.registerAgent(marketsAgent);
+  }
 
   public registerAgent(agent: AuraAgent) {
     this.agents.set(agent.id, agent);

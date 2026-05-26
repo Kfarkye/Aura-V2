@@ -3,6 +3,10 @@ export interface RouteContext {
   maxDepth: number;
   visitedAgents: string[];
   originalQuery: string;
+  accessToken?: string;
+  history?: any[];
+  image?: string;
+  imageMime?: string;
 }
 
 export interface AgentResponse {
