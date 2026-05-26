@@ -24,9 +24,6 @@ export interface LiveGame {
   timestamp: number;
 }
 
-// ============================================================================
-// Safe Image Handler (Hydration Safe & Headshot/Flag Compatible)
-// ============================================================================
 const TeamLogo = React.memo(({ src, alt }: { src?: string; alt: string }) => {
     const [hasError, setHasError] = useState(false);
 
@@ -56,9 +53,6 @@ const TeamLogo = React.memo(({ src, alt }: { src?: string; alt: string }) => {
 });
 TeamLogo.displayName = 'TeamLogo';
 
-// ============================================================================
-// Skeleton Loader (Zero CLS)
-// ============================================================================
 const ScheduleSkeleton = () => (
     <div className="flex-shrink-0 w-[85%] sm:w-[280px] snap-center sm:snap-start bg-[#0A0A0C] border border-white/[0.04] rounded-[24px] p-6 animate-pulse shadow-sm">
         <div className="flex justify-between items-center mb-6">
@@ -88,21 +82,23 @@ const ScheduleSkeleton = () => (
     </div>
 );
 
-// ============================================================================
-// Primary Component
-// ============================================================================
 function LiveScheduleCarousel() {
   const [games, setGames] = useState<LiveGame[]>([]);
   const [loading, setLoading] = useState(true);
+  const [hasHydrated, setHasHydrated] = useState(false); // Safeguard against Timezone Hydration mismatch
 
-  // Autonomous Multi-League Live Data Fetcher
   useEffect(() => {
+    setHasHydrated(true);
     let isMounted = true;
+    const controller = new AbortController();
     
     const fetchSchedule = async () => {
       try {
-        // Expanded SOTA Event Roster (14 Endpoints with High-Density Pagination)
-        const endpoints = [
+        // PRODUCTION DIRECTIVE: Route through GKE server-side cache if in production
+        const isProd = process.env.NODE_ENV === 'production';
+        const endpoints = isProd 
+          ? [{ url: '/api/sports/slate', league: 'PROXY' }]
+          : [
             { url: 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?limit=50', league: 'NBA' },
             { url: 'https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/scoreboard?limit=50', league: 'WNBA' },
             { url: 'https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard?limit=50', league: 'NHL' },
@@ -115,120 +111,119 @@ function LiveScheduleCarousel() {
             { url: 'https://site.api.espn.com/apis/site/v2/sports/soccer/mex.1/scoreboard?limit=50', league: 'LIGA MX' },
             { url: 'https://site.api.espn.com/apis/site/v2/sports/soccer/usa.1/scoreboard?limit=50', league: 'MLS' },
             { url: 'https://site.api.espn.com/apis/site/v2/sports/soccer/uefa.champions/scoreboard?limit=50', league: 'UCL' },
-            // Tennis requires massive limits due to 64+ match days
             { url: 'https://site.api.espn.com/apis/site/v2/sports/tennis/atp/scoreboard?limit=150', league: 'ATP' },
             { url: 'https://site.api.espn.com/apis/site/v2/sports/tennis/wta/scoreboard?limit=150', league: 'WTA' }
-        ];
+          ];
 
-        // Concurrent fetch across all 14 active leagues
         const results = await Promise.allSettled(
-            endpoints.map(ep => fetch(ep.url).then(r => r.json()).then(d => ({ ...d, _league: ep.league })))
+            endpoints.map(ep => 
+              fetch(ep.url, { signal: controller.signal })
+                .then(r => r.json())
+                .then(d => ({ ...d, _league: ep.league }))
+            )
         );
 
         let parsedGames: LiveGame[] = [];
 
-        for (const result of results) {
-            if (result.status === 'fulfilled' && result.value?.events) {
-                const leagueData = result.value;
-                const events = leagueData.events;
+        // Handle single aggregated server proxy payload vs raw direct endpoints
+        if (isProd && results[0].status === 'fulfilled') {
+            parsedGames = results[0].value.games || [];
+        } else {
+            for (const result of results) {
+                if (result.status === 'fulfilled' && result.value?.events) {
+                    const leagueData = result.value;
+                    const events = leagueData.events;
 
-                events.forEach((event: any) => {
-                    try {
-                        const comp = event.competitions?.[0];
-                        if (!comp) return;
+                    events.forEach((event: any) => {
+                        try {
+                            const comp = event.competitions?.[0];
+                            if (!comp) return;
 
-                        // Defensive Entity Extraction: Handles American Sports vs Tennis/International anomalies
-                        const homeRaw = comp.competitors?.find((c: any) => c.homeAway === 'home') || comp.competitors?.[0];
-                        const awayRaw = comp.competitors?.find((c: any) => c.homeAway === 'away') || comp.competitors?.[1];
-                        if (!homeRaw || !awayRaw) return;
+                            const homeRaw = comp.competitors?.find((c: any) => c.homeAway === 'home') || comp.competitors?.[0];
+                            const awayRaw = comp.competitors?.find((c: any) => c.homeAway === 'away') || comp.competitors?.[1];
+                            if (!homeRaw || !awayRaw) return;
 
-                        // Tennis wraps competitors in 'athlete', Team sports wrap in 'team'
-                        const homeEntity = homeRaw.team || homeRaw.athlete || homeRaw.player || homeRaw;
-                        const awayEntity = awayRaw.team || awayRaw.athlete || awayRaw.player || awayRaw;
+                            const homeEntity = homeRaw.team || homeRaw.athlete || homeRaw.player || homeRaw;
+                            const awayEntity = awayRaw.team || awayRaw.athlete || awayRaw.player || awayRaw;
 
-                        const state = comp.status?.type?.state;
-                        let status: LiveGame['status'] = 'SCHEDULED';
-                        if (state === 'in') status = 'LIVE';
-                        if (state === 'post') status = 'FINAL';
+                            const state = comp.status?.type?.state;
+                            let status: LiveGame['status'] = 'SCHEDULED';
+                            if (state === 'in') status = 'LIVE';
+                            if (state === 'post') status = 'FINAL';
 
-                        // Format Time Context
-                        let timeStr = comp.status?.type?.shortDetail || 'TBD';
-                        if (status === 'SCHEDULED' && event.date) {
-                            const dateObj = new Date(event.date);
-                            timeStr = !isNaN(dateObj.getTime()) 
-                                ? dateObj.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
-                                : timeStr;
-                        }
-
-                        // Spread mapping
-                        let oddsStr = comp.odds?.[0]?.details;
-                        if (oddsStr?.toLowerCase() === 'even') oddsStr = 'PK';
-
-                        // Resolve Canonical Names
-                        const homeName = homeEntity.displayName || homeEntity.name || homeEntity.fullName || 'Home';
-                        const awayName = awayEntity.displayName || awayEntity.name || awayEntity.fullName || 'Away';
-
-                        // Defensive abbreviation parsing for International prospects
-                        const getAbbr = (entity: any, name: string, fallback: string) => {
-                            if (entity.abbreviation) return entity.abbreviation;
-                            if (entity.shortName) return entity.shortName;
-                            if (leagueData._league === 'ATP' || leagueData._league === 'WTA') {
-                                const parts = name.trim().split(' ');
-                                return parts[parts.length - 1].substring(0, 3).toUpperCase();
+                            let timeStr = comp.status?.type?.shortDetail || 'TBD';
+                            if (status === 'SCHEDULED' && event.date) {
+                                const dateObj = new Date(event.date);
+                                timeStr = !isNaN(dateObj.getTime()) 
+                                    ? dateObj.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+                                    : timeStr;
                             }
-                            return fallback;
-                        };
 
-                        // Omnivorous Logo Extractor: Handles standard logos, headshots, and country flags
-                        const extractLogo = (entity: any, raw: any) => {
-                            return entity.headshot?.href || 
-                                   entity.headshot || 
-                                   entity.logo || 
-                                   entity.logos?.[0]?.href || 
-                                   entity.flag?.href || 
-                                   raw.athlete?.flag?.href || 
-                                   undefined;
-                        };
+                            let oddsStr = comp.odds?.[0]?.details;
+                            if (oddsStr?.toLowerCase() === 'even') oddsStr = 'PK';
 
-                        // Omnivorous Score Extractor: Handles aggregate scores vs tennis sets
-                        const homeScoreVal = homeRaw.score !== undefined ? homeRaw.score : (homeRaw.linescores && homeRaw.linescores.length > 0) ? homeRaw.linescores[homeRaw.linescores.length - 1]?.value : undefined;
-                        const awayScoreVal = awayRaw.score !== undefined ? awayRaw.score : (awayRaw.linescores && awayRaw.linescores.length > 0) ? awayRaw.linescores[awayRaw.linescores.length - 1]?.value : undefined;
-                        
-                        const pHomeScore = parseInt(homeScoreVal, 10);
-                        const pAwayScore = parseInt(awayScoreVal, 10);
+                            const homeName = homeEntity.displayName || homeEntity.name || homeEntity.fullName || 'Home';
+                            const awayName = awayEntity.displayName || awayEntity.name || awayEntity.fullName || 'Away';
 
-                        parsedGames.push({
-                            id: event.id,
-                            league: leagueData._league,
-                            homeTeam: homeName,
-                            homeAbbr: getAbbr(homeEntity, homeName, 'HM'),
-                            homeLogo: extractLogo(homeEntity, homeRaw),
-                            homeScore: status !== 'SCHEDULED' && !isNaN(pHomeScore) ? pHomeScore : undefined,
-                            awayTeam: awayName,
-                            awayAbbr: getAbbr(awayEntity, awayName, 'AW'),
-                            awayLogo: extractLogo(awayEntity, awayRaw),
-                            awayScore: status !== 'SCHEDULED' && !isNaN(pAwayScore) ? pAwayScore : undefined,
-                            time: timeStr,
-                            network: comp.broadcasts?.[0]?.names?.[0],
-                            odds: oddsStr,
-                            status,
-                            clockOrInning: comp.status?.type?.shortDetail,
-                            timestamp: new Date(event.date).getTime()
-                        });
-                    } catch (parseErr) {
-                        // Suppress individual event failures to protect the global slate
-                        console.warn(`[AURA:SCHEDULE] Suppressed parse error for event ${event?.id}`);
-                    }
-                });
+                            const getAbbr = (entity: any, name: string, fallback: string) => {
+                                if (entity.abbreviation) return entity.abbreviation;
+                                if (entity.shortName) return entity.shortName;
+                                if (leagueData._league === 'ATP' || leagueData._league === 'WTA') {
+                                    const parts = name.trim().split(' ');
+                                    return parts[parts.length - 1].substring(0, 3).toUpperCase();
+                                }
+                                return fallback;
+                            };
+
+                            const extractLogo = (entity: any, raw: any) => {
+                                return entity.headshot?.href || 
+                                       entity.headshot || 
+                                       entity.logo || 
+                                       entity.logos?.[0]?.href || 
+                                       entity.flag?.href || 
+                                       raw.athlete?.flag?.href || 
+                                       undefined;
+                            };
+
+                            // FIX: Tennis set-score aggregation safeguard
+                            const isTennis = leagueData._league === 'ATP' || leagueData._league === 'WTA';
+                            const homeScoreVal = homeRaw.score !== undefined ? homeRaw.score : (homeRaw.linescores && homeRaw.linescores.length > 0) ? homeRaw.linescores[homeRaw.linescores.length - 1]?.value : undefined;
+                            const awayScoreVal = awayRaw.score !== undefined ? awayRaw.score : (awayRaw.linescores && awayRaw.linescores.length > 0) ? awayRaw.linescores[awayRaw.linescores.length - 1]?.value : undefined;
+                            
+                            const pHomeScore = parseInt(homeScoreVal, 10);
+                            const pAwayScore = parseInt(awayScoreVal, 10);
+
+                            parsedGames.push({
+                                id: event.id,
+                                league: leagueData._league,
+                                homeTeam: homeName,
+                                homeAbbr: getAbbr(homeEntity, homeName, 'HM'),
+                                homeLogo: extractLogo(homeEntity, homeRaw),
+                                homeScore: status !== 'SCHEDULED' && !isNaN(pHomeScore) ? pHomeScore : undefined,
+                                awayTeam: awayName,
+                                awayAbbr: getAbbr(awayEntity, awayName, 'AW'),
+                                awayLogo: extractLogo(awayEntity, awayRaw),
+                                awayScore: status !== 'SCHEDULED' && !isNaN(pAwayScore) ? pAwayScore : undefined,
+                                time: timeStr,
+                                network: comp.broadcasts?.[0]?.names?.[0],
+                                odds: oddsStr,
+                                status,
+                                clockOrInning: comp.status?.type?.shortDetail,
+                                timestamp: new Date(event.date).getTime()
+                            });
+                        } catch (parseErr) {
+                            console.warn(`[AURA:SCHEDULE] Suppressed parse error for event ${event?.id}`);
+                        }
+                    });
+                }
             }
         }
 
-        // Institutional Sorting: LIVE -> SCHEDULED -> FINAL
         parsedGames.sort((a, b) => {
             const rank = { 'LIVE': 1, 'SCHEDULED': 2, 'FINAL': 3 };
             if (rank[a.status] !== rank[b.status]) return rank[a.status] - rank[b.status];
-            if (a.status === 'FINAL') return b.timestamp - a.timestamp; // Most recently finished first
-            return a.timestamp - b.timestamp; // Chronological order
+            if (a.status === 'FINAL') return b.timestamp - a.timestamp;
+            return a.timestamp - b.timestamp;
         });
 
         if (isMounted) {
@@ -242,17 +237,29 @@ function LiveScheduleCarousel() {
     };
 
     fetchSchedule();
-    
-    // Auto-refresh schedule every 30 seconds for live odds/scores
     const intervalId = setInterval(fetchSchedule, 30000);
     
     return () => {
         isMounted = false;
+        controller.abort(); // Instantly cancel all pending network sockets on unmount
         clearInterval(intervalId);
     };
   }, []);
 
-  if (!loading && games.length === 0) return null; // Collapse if slate is entirely empty
+  // Prevent server-side rendering of localized dates to preserve hydration safety
+  if (!hasHydrated) {
+      return (
+          <div className="w-full my-8 font-sans overflow-hidden">
+              <div className="flex gap-4 pb-8 pt-2 overflow-x-auto">
+                  <ScheduleSkeleton />
+                  <ScheduleSkeleton />
+                  <ScheduleSkeleton />
+              </div>
+          </div>
+      );
+  }
+
+  if (!loading && games.length === 0) return null;
 
   return (
     <div className="w-full my-8 font-sans overflow-hidden">
@@ -286,7 +293,6 @@ function LiveScheduleCarousel() {
                   </React.Fragment>
               ) : (
                   games.map((game, idx) => {
-                      // Note: Draws in soccer evaluate to false for both, rendering neutral colors correctly.
                       const isHomeWinner = game.status === 'FINAL' && (game.homeScore || 0) > (game.awayScore || 0);
                       const isAwayWinner = game.status === 'FINAL' && (game.awayScore || 0) > (game.homeScore || 0);
 
