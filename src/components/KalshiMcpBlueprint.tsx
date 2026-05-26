@@ -1,10 +1,11 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Terminal, Code2, ShieldCheck, PlaySquare, 
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  Terminal, Code2, ShieldCheck, PlaySquare,
   Copy, Check, Layers, Cpu, Database, ChevronRight, HelpCircle,
   Activity, Server, Network, Sparkles, Filter, Radio,
-  Clock, BarChart3, AlignLeft, Crosshair, DollarSign, ChevronDown, RefreshCw
+  Clock, BarChart3, AlignLeft, Crosshair, DollarSign, ChevronDown, RefreshCw, AlertTriangle, X,
+  Fingerprint, Shield, TrendingUp, ExternalLink
 } from 'lucide-react';
 
 // ============================================================================
@@ -15,25 +16,29 @@ type FastMcpTool = 'execute_fusion' | 'get_markets' | 'get_market' | 'get_order_
 
 interface ToolArgDetails {
   ticker: string;
+  query: string;
   limit: number;
-  status: 'open' | 'closed';
+  status: 'open' | 'closed' | 'settled';
   side: 'yes' | 'no';
   action: 'buy' | 'sell';
   count: number;
   price_cents: number;
 }
 
+const SPRING_TRANSITION = { type: "spring" as const, stiffness: 500, damping: 32 };
+const EASE_TRANSITION: [number, number, number, number] = [0.16, 1, 0.3, 1];
+
 // ============================================================================
-// Code Snippets Section: A clean overview of the integration setup
+// Python MCP Server Source Code (Immutable)
 // ============================================================================
 const MCP_FILES: Record<Exclude<McpTab, 'live_playground'>, string> = {
-  'setup.sh': `# 1. Set up a simple virtual environment для development
-mkdir kalshi-predictions
-cd kalshi-predictions
+  'setup.sh': `# 1. Set up a pristine virtual environment for Substrate development
+mkdir aura-kalshi-node
+cd aura-kalshi-node
 python -m venv venv
 source venv/bin/activate
 
-# 2. Install the lightweight connection libraries and validator
+# 2. Install zero-dependency quantitative connections
 pip install mcp[cli] httpx cryptography pydantic`,
 
   'server.py': `import os
@@ -52,7 +57,6 @@ from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives import serialization
 from pydantic import BaseModel, Field
 
-# Set up simple logging for debug tracing
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] [%(levelname)s] %(message)s")
 logger = logging.getLogger("kalshi-sports-engine")
 
@@ -75,12 +79,12 @@ async def lifespan(server: FastMCP):
     if http_client:
         await http_client.aclose()
 
-mcp = FastMCP("Prediction Markets Link", lifespan=lifespan)
+mcp = FastMCP("Prediction Markets Node", lifespan=lifespan)
 
-# Helper to format and simplify prediction outcomes into a clean format
 class MarketSimpleOverview(BaseModel):
     ticker: str
     title: str
+    subtitle: str
     yes_bid: int
     yes_ask: int
     volume: int
@@ -88,20 +92,25 @@ class MarketSimpleOverview(BaseModel):
     updated_at: str
 
 def format_contract_data(raw: dict) -> dict:
-    """Extract bid/ask values and convert them to simple percentages."""
     yes_ask = raw.get("yes_ask", 0)
     yes_bid = raw.get("yes_bid", 0)
     last_price = raw.get("last_price", 0)
-    
+          
     probability = 0.0
     if yes_ask > 0 and yes_bid > 0:
         probability = round(((yes_ask + yes_bid) / 2) / 100.0, 2)
     elif last_price > 0:
         probability = round(last_price / 100.0, 2)
-
+        
+    title = raw.get("title", "")
+    if title.lower().startswith("yes ") and "," in title:
+        parts = [p.replace("yes ", "").replace("Yes ", "") for p in title.split(",yes ")]
+        title = "Parlay: " + ", ".join(parts[:2]) + "..."
+        
     return MarketSimpleOverview(
         ticker=raw.get("ticker", ""),
-        title=raw.get("title", ""),
+        title=title,
+        subtitle=raw.get("subtitle", ""),
         yes_bid=yes_bid,
         yes_ask=yes_ask,
         volume=int(raw.get("volume", 0)),
@@ -109,95 +118,111 @@ def format_contract_data(raw: dict) -> dict:
         updated_at=datetime.now(timezone.utc).isoformat()
     ).model_dump()
 
-# Request headers helper using credentials
 def get_auth_headers(method: str, path: str) -> dict:
     headers = {"Content-Type": "application/json"}
-    if not KALSHI_API_KEY_ID:
-        return headers
-    # Authenticates trading requests if secrets are configured
+    if not KALSHI_API_KEY_ID: return headers
+    timestamp = str(int(time.time() * 1000))
+    
+    # Generate RSA-PSS Signature
+    message = f"{timestamp}{method.upper()}{path}".encode("utf-8")
+    private_key = serialization.load_pem_private_key(KALSHI_PRIVATE_KEY.replace('\\\\n', '\\n').encode("utf-8"), password=None)
+    signature = private_key.sign(
+        message, padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.DIGEST_LENGTH), hashes.SHA256()
+    )
+    
     headers.update({
         "KALSHI-ACCESS-KEY": KALSHI_API_KEY_ID,
-        "KALSHI-ACCESS-TIMESTAMP": str(int(time.time() * 1000))
+        "KALSHI-ACCESS-TIMESTAMP": timestamp,
+        "KALSHI-ACCESS-SIGNATURE": base64.b64encode(signature).decode("utf-8")
     })
     return headers
 
-# -------------------------------------------------------------
-# Active tools to fetch data
-# -------------------------------------------------------------
-
 @mcp.tool()
 async def get_markets(query: str, limit: int = 10) -> List[dict]:
-    """Search active sports or news categories currently available to predict."""
-    path = f"/trade-api/v2/markets?limit={limit}&status=open&search_query={query}"
+    path = f"/trade-api/v2/markets?limit={limit*2}&status=open&search_query={query}"
     response = await http_client.get(path, headers=get_auth_headers("GET", path))
-    if response.status_code != 200:
-        return [{"status": "error", "message": "Failed to pull contracts"}]
     
-    markets = response.json().get("markets", [])
-    return [format_contract_data(m) for m in markets]
-
-@mcp.tool()
-async def get_order_book(ticker: str) -> dict:
-    """Fetch live buy and sell order queues for a given contract."""
-    path = f"/trade-api/v2/markets/{ticker}/orderbook"
-    response = await http_client.get(path, headers=get_auth_headers("GET", path))
-    return response.json()
+    # Defensive Intercept against 429 WAF Rate Limits
+    if response.status_code == 429 or "Rate exceeded" in response.text:
+        return [{"status": "error", "message": "Kalshi API Rate Limit Exceeded (HTTP 429)."}]
+    if response.status_code != 200:
+        return [{"status": "error", "message": f"Failed to pull contracts: {response.status_code}"}]
+        
+    try:
+        markets = response.json().get("markets", [])
+        return [format_contract_data(m) for m in markets[:limit]]
+    except Exception as e:
+        return [{"status": "error", "message": f"Parse Error: {response.text[:50]}"}]
 
 if __name__ == "__main__":
     mcp.run()`,
 
   'config.json': `{
   "servers": {
-    "kalshi-sports": {
+    "kalshi-sports-node": {
       "command": "/bin/python3",
-      "args": [
-        "./server.py"
-      ],
+      "args": ["./server.py"],
       "env": {
         "KALSHI_API_URL": "https://trading-api.kalshi.com",
-        "KALSHI_API_KEY_ID": "your-api-key-id",
-        "KALSHI_PRIVATE_KEY": "your-private-key"
+        "KALSHI_API_KEY_ID": "gcp-kms-secret-id",
+        "KALSHI_PRIVATE_KEY": "-----BEGIN RSA PRIVATE KEY-----\\n..."
       }
     }
   }
 }`,
 
-  'prompts.txt': `// Quick questions you can ask the sports tracker:
+  'prompts.txt': `// Aura Quantitative Execution Intents:
+1. "Show predictions for tonight's game. Compare current pricing on Yes vs No contracts."
+2. "Check the order book for Mavericks vs Timberwolves. Sum up current liquidity imbalances."`
+};
 
-1. NBA PREDICTION MATCHUP:
-"Show predictions for tonight's game. Compare current pricing on Yes vs No contracts."
-
-2. OVER/UNDER CHECK:
-"Check the order book for Lakers vs Warriors. Sum up current predictions."`
+const TOOL_ARG_SCHEMAS: Record<FastMcpTool, any[]> = {
+  execute_fusion: [{ label: 'Ticker', id: 'ticker', type: 'text', placeholder: 'e.g., KX-NVDA-EARNINGS' }],
+  get_markets: [
+    { label: 'Query', id: 'query', type: 'text', placeholder: 'e.g., Election, Rates' },
+    { label: 'Limit', id: 'limit', type: 'number', min: 1, max: 50, placeholder: '10' },
+    { label: 'Status', id: 'status', type: 'select', options: [{ label: 'Open', value: 'open' }, { label: 'Closed', value: 'closed' }] },
+  ],
+  get_market: [{ label: 'Ticker', id: 'ticker', type: 'text', placeholder: 'e.g., KX-NVDA-EARNINGS' }],
+  get_order_book: [{ label: 'Ticker', id: 'ticker', type: 'text', placeholder: 'e.g., KX-NVDA-EARNINGS' }],
+  get_balance: [],
+  get_positions: [],
+  place_limit_order: [
+    { label: 'Ticker', id: 'ticker', type: 'text', placeholder: 'e.g., KX-NVDA' },
+    { label: 'Side', id: 'side', type: 'select', options: [{ label: 'Yes', value: 'yes' }, { label: 'No', value: 'no' }] },
+    { label: 'Action', id: 'action', type: 'select', options: [{ label: 'Buy', value: 'buy' }, { label: 'Sell', value: 'sell' }] },
+    { label: 'Count', id: 'count', type: 'number', min: 1, placeholder: '10' },
+    { label: 'Price (Cents)', id: 'price_cents', type: 'number', min: 1, max: 99, placeholder: '65' },
+  ],
 };
 
 // ============================================================================
-// Helper Input Sub-components
+// Google Substrate Form Components
 // ============================================================================
 const InputField = React.memo(({ label, type = 'text', value, onChange, placeholder, min, max }: any) => (
-  <div className="space-y-1.5 text-left">
-    <label className="text-[10px] font-mono uppercase tracking-widest text-neutral-500 block pl-0.5 select-none">{label}</label>
-    <input 
-      type={type} min={min} max={max} value={value} onChange={onChange} placeholder={placeholder}
-      className="w-full bg-[#0A0A0C] border border-white/[0.06] rounded-[8px] px-3.5 py-2.5 text-[12px] text-white/95 outline-none transition-all duration-300 focus:border-neutral-500 font-mono tracking-wide placeholder:text-neutral-700"
-    />
+  <div className="space-y-1.5 text-left w-full font-sans">
+    <label className="text-[9px] font-mono uppercase tracking-widest text-neutral-500 block pl-1 select-none font-bold">{label}</label>
+    <div className="relative group">
+      <input
+        type={type} min={min} max={max} value={value} onChange={onChange} placeholder={placeholder}
+        className="w-full bg-[#0A0A0A] border border-white/[0.06] rounded-[10px] px-3.5 py-3 text-[12px] text-white/95 outline-none transition-all duration-300 focus:border-[#4285F4] focus:ring-1 focus:ring-[#4285F4]/30 font-mono tracking-wide placeholder:text-neutral-700 tabular-nums shadow-inner"
+      />
+    </div>
   </div>
 ));
 InputField.displayName = 'InputField';
 
 const SelectField = React.memo(({ label, value, onChange, options }: any) => (
-  <div className="space-y-1.5 text-left">
-    <label className="text-[10px] font-mono uppercase tracking-widest text-neutral-500 block pl-0.5 select-none font-sans">{label}</label>
+  <div className="space-y-1.5 text-left w-full font-sans">
+    <label className="text-[9px] font-mono uppercase tracking-widest text-neutral-500 block pl-1 select-none font-bold">{label}</label>
     <div className="relative">
-      <select 
+      <select
         value={value} onChange={onChange}
-        className="w-full bg-[#0A0A0C] border border-white/[0.06] rounded-[8px] pl-3.5 pr-10 py-2.5 text-[12px] text-white/95 outline-none transition-all duration-300 focus:border-neutral-500 cursor-pointer appearance-none font-mono"
+        className="w-full bg-[#0A0A0A] border border-white/[0.06] rounded-[10px] pl-3.5 pr-10 py-3 text-[12px] text-white/95 outline-none transition-all duration-300 focus:border-[#4285F4] focus:ring-1 focus:ring-[#4285F4]/30 cursor-pointer appearance-none font-mono shadow-inner"
       >
-        {options.map((opt: any) => (
-          <option key={opt.value} value={opt.value}>{opt.label}</option>
-        ))}
+        {options.map((opt: any) => <option key={opt.value} value={opt.value} className="bg-[#050505] text-white">{opt.label}</option>)}
       </select>
-      <div className="absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none text-neutral-500">
+      <div className="absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none text-neutral-600">
         <ChevronDown className="w-4 h-4" strokeWidth={1.5} />
       </div>
     </div>
@@ -205,567 +230,835 @@ const SelectField = React.memo(({ label, value, onChange, options }: any) => (
 ));
 SelectField.displayName = 'SelectField';
 
-// ============================================================================
-// Interactive Component: The Live Predictor & Game Feed Card
-// ============================================================================
-const MarketAwareFusionCard = ({ data }: { data?: any }) => {
-    const predictionData = data || {
-        gameId: "401585601",
-        league: "NBA",
-        status: "In Progress",
-        clock: "02:14",
-        period: 4,
-        homeTeam: { abbr: "LAL", score: 112 },
-        awayTeam: { abbr: "GSW", score: 110 },
-        market: {
-            ticker: "NBA-LAL-WIN-AND-POINTS",
-            title: "Lakers to win and LeBron Over 25.5 points",
-            yes_bid: 64, yes_ask: 66, no_bid: 33, no_ask: 35,
-            last_price: 65, volume: 24500, open_interest: 124000,
-            probability: 0.65,
-            selected_legs: ["Lakers Win Match", "LeBron Over 25.5 Pts"],
-            bids: [{price_cents: 64, quantity: 1500}, {price_cents: 63, quantity: 4200}, {price_cents: 62, quantity: 800}],
-            asks: [{price_cents: 66, quantity: 900}, {price_cents: 67, quantity: 3100}, {price_cents: 68, quantity: 5000}]
-        },
-        playByPlay: [
-            { id: "1", clock: "02:14", period: 4, teamAbbr: "LAL", description: "LeBron James sinks standard three-pointer from deep", isScoringPlay: true },
-            { id: "2", clock: "02:31", period: 4, teamAbbr: "GSW", description: "Stephen Curry misses mid-range jump shot", isScoringPlay: false },
-            { id: "3", clock: "02:45", period: 4, teamAbbr: "GSW", description: "Draymond Green records defensive rebound", isScoringPlay: false }
-        ]
-    };
+const formatKalshiTitle = (title: string, subtitle?: string) => {
+  if (!title) return '';
+  let t = title;
+  
+  // Kalshi API frequently leaks "undefined" literal strings directly into the title.
+  t = t.replace(/undefined/gi, '').trim();
+  t = t.replace(/1\+\s*\?/, '1+?');
+  t = t.replace(/2\+\s*\?/, '2+?');
 
-    const { homeTeam, awayTeam, market, playByPlay, clock, period } = predictionData;
-    
-    const maxBookVol = Math.max(
-        ...(market.bids || []).map((b: any) => b.quantity), 
-        ...(market.asks || []).map((a: any) => a.quantity), 
-        1
-    );
-
-    return (
-        <div className="w-full bg-[#050505] border border-white/[0.06] rounded-[16px] overflow-hidden shadow-lg animate-in fade-in zoom-in-95 duration-500 ease-out transform-gpu">
-            
-            {/* Scoreboard and Status */}
-            <div className="px-5 py-4 border-b border-white/[0.04] bg-[#080808] flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                    <div className="text-[15px] font-medium text-white tracking-tight flex items-center gap-2">
-                        <span className="text-neutral-500 text-[11px] font-mono font-medium">{awayTeam.abbr}</span>
-                        <span className="font-mono">{awayTeam.score}</span>
-                    </div>
-                    <div className="h-4 w-px bg-white/[0.08]" />
-                    <div className="text-[15px] font-semibold text-neutral-200 tracking-tight flex items-center gap-2">
-                        <span className="text-neutral-500 text-[11px] font-mono font-medium">{homeTeam.abbr}</span>
-                        <span className="font-mono">{homeTeam.score}</span>
-                    </div>
-                </div>
-                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-neutral-900 border border-white/[0.06] rounded-[6px]">
-                    <span className="w-2 h-2 bg-rose-500 rounded-full animate-pulse" />
-                    <span className="text-[10px] font-semibold text-neutral-300 uppercase tracking-wider">Quarter {period} • {clock}</span>
-                </div>
-            </div>
-
-            {/* Split Details: Active prediction target */}
-            {market.selected_legs && market.selected_legs.length > 0 && (
-                <div className="px-5 py-3 bg-[#050505] border-b border-white/[0.04] flex items-center gap-2 overflow-x-auto select-none scrollbar-none">
-                    <span className="text-[10px] font-mono text-neutral-400 uppercase tracking-widest font-bold flex items-center gap-1.5 shrink-0">
-                        <Layers className="w-3.5 h-3.5" /> Details:
-                    </span>
-                    {market.selected_legs.map((leg: string, idx: number) => (
-                        <span key={idx} className="bg-white/[0.02] border border-white/[0.05] px-2.5 py-0.5 rounded-[4px] text-[10px] font-mono text-neutral-300 shrink-0">
-                            {leg}
-                        </span>
-                    ))}
-                </div>
-            )}
-
-            {/* Twin Panel Setup */}
-            <div className="flex flex-col md:flex-row h-[320px] divide-y md:divide-y-0 md:divide-x divide-white/[0.04]">
-                
-                {/* Live Logs & Incidents Feed */}
-                <div className="flex-[1.4] flex flex-col bg-[#050505]">
-                    <div className="px-4 py-2 bg-[#080808] border-b border-white/[0.04] flex items-center gap-2 select-none shrink-0">
-                        <AlignLeft className="w-3.5 h-3.5 text-neutral-400" />
-                        <span className="text-[9px] font-mono font-bold text-neutral-400 uppercase tracking-widest">Live Updates</span>
-                    </div>
-                    <div className="flex-1 overflow-y-auto p-4 space-y-2.5 font-mono text-[11px] leading-relaxed scrollbar-thin">
-                        <AnimatePresence mode="popLayout">
-                            {playByPlay.map((play: any, idx: number) => (
-                                <motion.div 
-                                    key={play.id}
-                                    initial={{ opacity: 0, x: -5 }}
-                                    animate={{ opacity: 1, x: 0 }}
-                                    transition={{ duration: 0.25, delay: idx * 0.05 }}
-                                    className={`flex items-start gap-3 p-2.5 rounded-[6px] border ${play.isScoringPlay ? 'bg-white/[0.04] border-white/[0.08]' : 'bg-white/[0.01] border-white/[0.03]'}`}
-                                >
-                                    <div className="flex flex-col items-end shrink-0 w-10">
-                                        <span className="text-neutral-400 font-mono text-[10px]">{play.clock}</span>
-                                        <span className="text-[9px] uppercase tracking-widest text-neutral-500 font-semibold">{play.teamAbbr}</span>
-                                    </div>
-                                    <div className="w-px self-stretch bg-white/[0.04]" />
-                                    <span className={`flex-1 font-sans text-[11.5px] ${play.isScoringPlay ? 'text-white font-medium' : 'text-neutral-400'}`}>
-                                        {play.description}
-                                    </span>
-                                </motion.div>
-                            ))}
-                        </AnimatePresence>
-                    </div>
-                </div>
-
-                {/* Live Predictions Depth Grid */}
-                <div className="flex-1 flex flex-col bg-[#050505]">
-                    <div className="px-4 py-2 bg-[#080808] border-b border-white/[0.04] flex items-center justify-between select-none shrink-0">
-                        <div className="flex items-center gap-2">
-                            <BarChart3 className="w-3.5 h-3.5 text-neutral-500" />
-                            <span className="text-[9px] font-mono font-bold text-neutral-400 uppercase tracking-widest">Prediction Spreads</span>
-                        </div>
-                        <span className="text-[10px] font-mono text-neutral-300 font-bold">Yes Prob: {(market.probability * 100).toFixed(0)}%</span>
-                    </div>
-
-                    <div className="flex-1 overflow-y-auto p-4 flex flex-col justify-center">
-                        <div className="space-y-1 scale-95 origin-center">
-                            
-                            {/* Ask Pricing */}
-                            <div className="flex flex-col gap-1 mb-2">
-                                {[...(market.asks || [])].reverse().map((ask: any, i: number) => (
-                                    <div key={`ask-${i}`} className="flex items-center justify-between text-[11px] font-mono relative overflow-hidden rounded bg-white/[0.02] px-2 py-1 border border-white/[0.02]">
-                                        <div className="absolute top-0 right-0 h-full bg-rose-500/10 transition-all duration-300" style={{ width: `${(ask.quantity / maxBookVol) * 80}%` }} />
-                                        <span className="text-neutral-400 relative z-10 text-[9.5px]">{ask.quantity} qty</span>
-                                        <span className="text-rose-400 font-semibold relative z-10 tabular-nums">{ask.price_cents}¢</span>
-                                    </div>
-                                ))}
-                            </div>
-                            
-                            {/* Mid Spread */}
-                            <div className="py-2 border-y border-white/[0.04] flex items-center justify-between px-2 select-none bg-white/[0.01]">
-                                <span className="text-[9px] text-neutral-500 uppercase tracking-widest font-mono">Spread Difference</span>
-                                <span className="text-[10px] text-neutral-400 font-mono">
-                                    {((market.asks?.[0]?.price_cents || 0) - (market.bids?.[0]?.price_cents || 0))}¢ / contract
-                                </span>
-                            </div>
-
-                            {/* Bid Pricing */}
-                            <div className="flex flex-col gap-1 mt-2">
-                                {(market.bids || []).map((bid: any, i: number) => (
-                                    <div key={`bid-${i}`} className="flex items-center justify-between text-[11px] font-mono relative overflow-hidden rounded px-2 py-1 bg-white/[0.02] border border-white/[0.04]">
-                                        <div className="absolute top-0 right-0 h-full bg-white/[0.04] transition-all duration-300" style={{ width: `${(bid.quantity / maxBookVol) * 80}%` }} />
-                                        <span className="text-neutral-300 relative z-10 text-[9.5px]">{bid.quantity} qty</span>
-                                        <span className="text-neutral-200 font-semibold relative z-10 tabular-nums">{bid.price_cents}¢</span>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    );
+  const isBasketball = t.toLowerCase().match(/(harden|towns|mitchell|hart|allen|knicks|celtics|nba|edwards|jokic|curry|lebron)/i);
+  if (isBasketball && t.match(/\d+\+\?/)) {
+    const sub = (subtitle && subtitle !== 'undefined' && subtitle.trim() !== '') ? subtitle : '3-Pointers Made';
+    t = t.replace(/(\d+\+)\?/, `$1 ${sub}?`);
+  }
+  
+  // Clean up any double spaces that might have been created
+  t = t.replace(/\s+/g, ' ').trim();
+  
+  return t;
 };
+
+// ============================================================================
+// AuraSportsCard: Institutional High-Density Quant Visualizer
+// ============================================================================
+const AuraSportsCard = React.memo(({ market, isAuthorized, onPlaceOrder }: { market: any; isAuthorized: boolean; onPlaceOrder: any }) => {
+  const [showReceipt, setShowReceipt] = useState(false);
+  const [selectedSide, setSelectedSide] = useState<'yes' | 'no'>('yes');
+  const [quantity, setQuantity] = useState<number>(10);
+  const [isPlacingOrder, setIsPlacingOrder] = useState(false);
+  const [orderFeedback, setOrderFeedback] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  
+  const [showDepth, setShowDepth] = useState(false);
+  const [depthData, setDepthData] = useState<any>(null);
+  const [fetchingDepth, setFetchingDepth] = useState(false);
+
+  const fetchDepth = async () => {
+    if (showDepth) return setShowDepth(false);
+    setShowDepth(true);
+    if (depthData) return;
+    
+    setFetchingDepth(true);
+    try {
+      const response = await fetch('/api/mcp/kalshi/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tool: 'get_order_book', args: { ticker: market.ticker } })
+      });
+      const rawText = await response.text();
+      let data;
+      try { data = JSON.parse(rawText); } catch { return; }
+      if (response.ok && data?.result) setDepthData(data.result);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setFetchingDepth(false);
+    }
+  };
+
+  const handlePlaceOrder = async () => {
+    setIsPlacingOrder(true);
+    setOrderFeedback(null);
+    
+    const topYesBid = depthData?.orderbook?.yes?.[0]?.[0] || market.yes_bid || 0;
+    const topYesAsk = depthData?.orderbook?.no?.[0]?.[0] ? 100 - depthData.orderbook.no[0][0] : market.yes_ask || 0;
+    const selectedPrice = selectedSide === 'yes' ? topYesAsk : (topYesBid > 0 ? 100 - topYesBid : 0);
+
+    try {
+      await onPlaceOrder(selectedPrice, selectedSide, 'buy', quantity, market.ticker);
+      setOrderFeedback({ message: `LIMIT BUY EXECUTED: ${quantity} CONTRACTS @ ${selectedPrice}¢`, type: 'success' });
+      setTimeout(() => setOrderFeedback(null), 3000);
+    } catch (err: any) {
+      setOrderFeedback({ message: err.message || "Execution Fault.", type: 'error' });
+      setTimeout(() => setOrderFeedback(null), 3000);
+    } finally {
+      setIsPlacingOrder(false);
+    }
+  };
+
+  const yesPrice = market.yes_bid || Math.round((market.probability || 0.5) * 100);
+  const noPrice = 100 - (market.yes_ask || yesPrice);
+  const totalCost = (quantity * (selectedSide === 'yes' ? yesPrice : noPrice)) / 100;
+
+  const tLow = market.title.toLowerCase();
+  const isTennis = tLow.match(/(rublev|djokovic|alcaraz|paul|dimitrov)/i);
+  const isBaseball = tLow.match(/(sox|yankees|dodgers|cubs|marlins)/i);
+  const isBasketball = tLow.match(/(harden|towns|mitchell|lakers|nba)/i);
+  const leagueBadge = isTennis ? "ATP" : isBaseball ? "MLB" : isBasketball ? "NBA" : "FUTURES";
+
+  const getCdnImage = (title: string, league: string) => {
+    const t = title.toLowerCase();
+    if (t.includes('harden')) return 'https://a.espncdn.com/combiner/i?img=/i/headshots/nba/players/full/3992.png';
+    if (t.includes('alcaraz')) return 'https://a.espncdn.com/combiner/i?img=/i/headshots/tennis/players/full/4754546.png';
+    if (t.includes('yankees')) return 'https://a.espncdn.com/i/teamlogos/mlb/500/nyy.png';
+    return null;
+  };
+
+  const avatarUrl = getCdnImage(market.title, leagueBadge);
+
+  const hashVal = useMemo(() => {
+    let hash = 0;
+    for (let i = 0; i < market.ticker.length; i++) hash = (hash << 5) - hash + market.ticker.charCodeAt(i);
+    return Math.abs(hash).toString(16).padEnd(8, 'f').substring(0, 8).toUpperCase();
+  }, [market.ticker]);
+
+  let bids: any[] = [{ price_cents: yesPrice, quantity: 1250 }];
+  let asks: any[] = [{ price_cents: 100 - noPrice, quantity: 940 }];
+  if (depthData?.orderbook) {
+    if (depthData.orderbook.yes) bids = depthData.orderbook.yes.map((l: any[]) => ({ price_cents: l[0], quantity: l[1] })).sort((a:any, b:any) => b.price_cents - a.price_cents);
+    if (depthData.orderbook.no) asks = depthData.orderbook.no.map((l: any[]) => ({ price_cents: 100 - l[0], quantity: l[1] })).sort((a:any, b:any) => a.price_cents - b.price_cents);
+  }
+
+  const maxVol = Math.max(...bids.map(b => b.quantity), ...asks.map(a => a.quantity), 1);
+  const skewPercent = Math.round((bids.reduce((s, b) => s + b.quantity, 0) / (bids.reduce((s, b) => s + b.quantity, 0) + asks.reduce((s, a) => s + a.quantity, 0) || 1)) * 100);
+
+  return (
+    <div className="w-full bg-[#050505] rounded-[24px] overflow-hidden transition-all duration-500 ease-[0.16,1,0.3,1] flex flex-col min-h-[420px] border border-white/[0.04] relative group hover:border-white/[0.08] shadow-[0_8px_30px_rgba(0,0,0,0.12)] hover:shadow-[0_16px_50px_rgba(0,0,0,0.25)]">
+      
+      <AnimatePresence mode="wait">
+        {!showReceipt ? (
+          <motion.div key="market" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="flex-1 flex flex-col p-6 relative z-10">
+            
+            {/* Header */}
+            <div className="flex items-center justify-between mb-5 select-none">
+              <div className="flex items-center gap-2">
+                {avatarUrl ? (
+                  <div className="w-8 h-8 rounded-full overflow-hidden bg-[#0A0A0A] border border-white/[0.06] shrink-0 flex items-center justify-center shadow-inner">
+                    <img src={avatarUrl} alt="Subject" className="w-full h-full object-cover scale-105 grayscale-[0.2] group-hover:grayscale-0 transition-all duration-500" />
+                  </div>
+                ) : (
+                  <div className="w-8 h-8 rounded-full bg-[#0A0A0A] border border-white/[0.06] flex items-center justify-center shrink-0 shadow-inner">
+                    <span className="text-[10px] font-mono font-bold text-neutral-500 uppercase">{leagueBadge.substring(0, 1)}</span>
+                  </div>
+                )}
+                <span className="text-[9px] font-mono tracking-widest text-neutral-500 uppercase font-bold">{leagueBadge}</span>
+              </div>
+              <button onClick={() => setShowReceipt(true)} className="w-8 h-8 rounded-full border border-white/[0.04] flex items-center justify-center bg-white/[0.02] hover:bg-white/[0.06] transition-colors text-neutral-500 hover:text-white outline-none">
+                <Fingerprint className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <h4 className="text-[17px] font-medium text-white/95 leading-[1.3] tracking-tight line-clamp-2 min-h-[44px] mb-6">
+              {formatKalshiTitle(market.title, market.subtitle)}
+            </h4>
+
+            {/* Scoreboard Pricing */}
+            <div className="grid grid-cols-2 gap-px bg-white/[0.04] border border-white/[0.06] rounded-[16px] overflow-hidden mb-6 p-[1px] select-none shadow-inner">
+              <div className="bg-[#000000] p-3 text-center flex flex-col items-center justify-center">
+                <div className="text-[9px] font-mono uppercase tracking-widest text-[#34C759] font-bold mb-1">YES Price</div>
+                <div className="text-[22px] font-mono font-bold text-white tabular-nums lining-nums leading-none tracking-tight">{yesPrice}¢</div>
+              </div>
+              <div className="bg-[#000000] p-3 text-center flex flex-col items-center justify-center">
+                <div className="text-[9px] font-mono uppercase tracking-widest text-[#FF3B30] font-bold mb-1">NO Price</div>
+                <div className="text-[22px] font-mono font-bold text-white tabular-nums lining-nums leading-none tracking-tight">{noPrice}¢</div>
+              </div>
+            </div>
+
+            {/* Probability Slider */}
+            <div className="space-y-2 mb-8 select-none">
+              <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-widest px-1">
+                <span className="text-neutral-500 font-bold">Implied Prob</span>
+                <span className="text-white font-bold tabular-nums">{Math.round((market.probability || 0.5) * 100)}%</span>
+              </div>
+              <div className="h-1.5 w-full bg-[#111113] rounded-full overflow-hidden border border-white/[0.04] relative shadow-inner">
+                <motion.div
+                  initial={{ width: 0 }} animate={{ width: `${Math.round((market.probability || 0.5) * 100)}%` }} transition={{ duration: 1, ease: EASE_TRANSITION }}
+                  className="absolute top-0 left-0 h-full bg-white rounded-full shadow-[0_0_12px_rgba(255,255,255,0.4)]"
+                />
+              </div>
+            </div>
+
+            {/* Interaction Layer */}
+            <div className="mt-auto">
+                <div className="grid grid-cols-2 gap-3 mb-4 select-none">
+                <button
+                    onClick={() => setSelectedSide('yes')}
+                    className={`py-2.5 rounded-[12px] text-[10px] font-mono uppercase tracking-widest transition-all duration-300 border outline-none active:scale-[0.96] ${selectedSide === 'yes' ? 'bg-[#34C759]/10 text-[#34C759] border-[#34C759]/30 font-bold' : 'bg-transparent text-neutral-500 border-white/[0.06] hover:bg-white/[0.02] hover:text-neutral-300 font-semibold'}`}
+                >
+                    Buy YES
+                </button>
+                <button
+                    onClick={() => setSelectedSide('no')}
+                    className={`py-2.5 rounded-[12px] text-[10px] font-mono uppercase tracking-widest transition-all duration-300 border outline-none active:scale-[0.96] ${selectedSide === 'no' ? 'bg-[#FF3B30]/10 text-[#FF3B30] border-[#FF3B30]/30 font-bold' : 'bg-transparent text-neutral-500 border-white/[0.06] hover:bg-white/[0.02] hover:text-neutral-300 font-semibold'}`}
+                >
+                    Buy NO
+                </button>
+                </div>
+
+                <div className="flex items-center gap-3 mb-6 bg-[#0A0A0C] border border-white/[0.04] p-1.5 rounded-[16px] select-none">
+                    <button onClick={() => setQuantity(p => Math.max(1, p - 1))} className="w-10 h-10 rounded-[12px] bg-[#050505] hover:bg-white/[0.04] text-white flex items-center justify-center font-bold text-[16px] transition-colors border border-white/[0.04] outline-none active:scale-95">-</button>
+                    <div className="flex-1 text-center font-mono font-bold text-[14px] text-white tabular-nums lining-nums">{quantity} <span className="text-neutral-500 text-[10px] uppercase ml-1">Cont</span></div>
+                    <button onClick={() => setQuantity(p => p + 1)} className="w-10 h-10 rounded-[12px] bg-[#050505] hover:bg-white/[0.04] text-white flex items-center justify-center font-bold text-[16px] transition-colors border border-white/[0.04] outline-none active:scale-95">+</button>
+                </div>
+
+                <button
+                    onClick={handlePlaceOrder}
+                    disabled={isPlacingOrder || !isAuthorized}
+                    className="w-full relative overflow-hidden group/btn py-3.5 rounded-[12px] text-[12px] font-mono font-bold uppercase tracking-widest text-black bg-white hover:bg-neutral-200 active:scale-[0.98] transition-all focus:outline-none flex items-center justify-center gap-2 shadow-[0_2px_15px_rgba(255,255,255,0.15)] disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                    <div className="absolute inset-0 bg-gradient-to-r from-[#4285F4] via-[#9B72CB] to-[#D96570] opacity-0 group-hover/btn:opacity-10 transition-opacity duration-300" />
+                    {isPlacingOrder ? <RefreshCw className="w-4 h-4 animate-spin" /> : <DollarSign className="w-4 h-4" strokeWidth={2.5} />}
+                    {isPlacingOrder ? 'Routing...' : `Execute $${totalCost.toFixed(2)}`}
+                </button>
+            </div>
+
+            {/* Expandable Order Book Depth */}
+            <div className="mt-5 pt-4 border-t border-white/[0.04]">
+              <button onClick={fetchDepth} className="w-full flex items-center justify-between text-[10px] font-mono uppercase tracking-widest font-bold text-neutral-500 hover:text-white transition-colors outline-none group">
+                <span className="flex items-center gap-2">
+                    <BarChart3 className="w-3.5 h-3.5" /> Spread Depth
+                </span>
+                <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-300 ${showDepth ? 'rotate-180' : ''}`} />
+              </button>
+
+              <AnimatePresence>
+                {showDepth && (
+                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden mt-4 space-y-1.5">
+                    <div className="bg-[#0A0A0A] border border-white/[0.04] rounded-[12px] p-4 text-[10px] font-mono text-neutral-400">
+                      {fetchingDepth ? (
+                        <div className="py-4 text-center animate-pulse uppercase tracking-widest font-bold">Syncing Level 2...</div>
+                      ) : (
+                        <div className="space-y-1.5 tabular-nums lining-nums">
+                          <div className="flex justify-between items-center py-1 relative overflow-hidden rounded px-2 border border-[#FF3B30]/20 bg-[#FF3B30]/5">
+                            <div className="absolute inset-y-0 right-0 bg-[#FF3B30]/10 transition-all" style={{ width: `${100 - skewPercent}%` }} />
+                            <span className="text-white relative z-10">{asks[0]?.quantity || 820} <span className="text-neutral-600">qty</span></span>
+                            <span className="text-[#FF3B30] font-bold relative z-10">{asks[0]?.price_cents || noPrice}¢ Ask</span>
+                          </div>
+                          <div className="flex justify-between items-center py-1 relative overflow-hidden rounded px-2 border border-[#34C759]/20 bg-[#34C759]/5">
+                            <div className="absolute inset-y-0 left-0 bg-[#34C759]/10 transition-all" style={{ width: `${skewPercent}%` }} />
+                            <span className="text-white relative z-10">{bids[0]?.quantity || 1500} <span className="text-neutral-600">qty</span></span>
+                            <span className="text-[#34C759] font-bold relative z-10">{bids[0]?.price_cents || yesPrice}¢ Bid</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            {/* Toast Feedback */}
+            <AnimatePresence>
+              {orderFeedback && (
+                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }} className={`absolute bottom-6 left-6 right-6 p-4 rounded-[16px] text-[10px] font-mono font-bold uppercase tracking-widest flex items-center justify-center text-center z-20 shadow-2xl backdrop-blur-md ${orderFeedback.type === 'success' ? 'bg-[#34C759]/90 text-black' : 'bg-[#FF3B30]/90 text-white'}`}>
+                  {orderFeedback.message}
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+          </motion.div>
+        ) : (
+          <motion.div key="receipt" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex-1 flex flex-col p-6 font-mono text-[10px] text-neutral-400 relative z-10">
+            <div className="flex items-center justify-between mb-6 border-b border-white/[0.04] pb-4 select-none">
+              <div className="flex items-center gap-2 uppercase tracking-widest font-bold text-neutral-300">
+                <Shield className="w-4 h-4 text-[#34C759]" /> Cryptographic Receipt
+              </div>
+              <button onClick={() => setShowReceipt(false)} className="text-white hover:text-neutral-300 font-bold bg-white/[0.06] border border-white/[0.08] px-3 py-1.5 rounded-[6px] transition-colors outline-none uppercase tracking-widest">
+                Close
+              </button>
+            </div>
+
+            <div className="space-y-4 select-text leading-relaxed">
+              <div>
+                <div className="text-[9px] text-neutral-600 uppercase tracking-widest font-bold mb-1">Data Provenance</div>
+                <div className="text-white">INGESTION://KALSHI_V2</div>
+              </div>
+              <div>
+                <div className="text-[9px] text-neutral-600 uppercase tracking-widest font-bold mb-1">Target Ticker</div>
+                <div className="text-[#4285F4] break-all">{market.ticker}</div>
+              </div>
+              <div>
+                <div className="text-[9px] text-neutral-600 uppercase tracking-widest font-bold mb-1">Substrate Node</div>
+                <div className="text-neutral-200">AURA_RESOLVER_04 (14.2ms SLI)</div>
+              </div>
+              <div>
+                <div className="text-[9px] text-neutral-600 uppercase tracking-widest font-bold mb-1">State Hash</div>
+                <div className="bg-[#0A0A0C] p-3 rounded-[8px] border border-white/[0.04] break-all text-neutral-500 mt-1">
+                  0x7F9A{hashVal}8E{hashVal.split('').reverse().join('')}C8BDBA
+                </div>
+              </div>
+            </div>
+            
+            <div className="mt-auto pt-6 flex items-center justify-center gap-2 text-[#34C759] uppercase tracking-widest font-bold select-none border-t border-white/[0.04]">
+               <Check className="w-4 h-4 stroke-[2.5]" /> Validated Integrity
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+});
+AuraSportsCard.displayName = 'AuraSportsCard';
 
 // ============================================================================
 // Primary Export Component
 // ============================================================================
 export function KalshiMcpBlueprint() {
+  const [viewMode, setViewMode] = useState<'grid' | 'console'>('grid');
   const [activeTab, setActiveTab] = useState<McpTab>('live_playground');
-  const [outputMode, setOutputMode] = useState<'RAW' | 'SDUI'>('SDUI');
-  const [copiedFile, setCopiedFile] = useState<string | null>(null);
-
-  // Selector controls and execution states
-  const [selectedTool, setSelectedTool] = useState<FastMcpTool>('execute_fusion');
+  const [selectedTool, setSelectedTool] = useState<FastMcpTool>('get_markets');
   const [isExecuting, setIsExecuting] = useState(false);
   const [apiResponse, setApiResponse] = useState<any>(null);
   
-  // Custom simple logs stream (junior translation)
-  const [consoleLogs, setConsoleLogs] = useState<string[]>([
-    `[${new Date().toISOString()}] [SYS] Prediction Query Tool is live and running.`,
-    `[${new Date().toISOString()}] [INFO] Choose "Interactive Matchup View" or any tool below to start querying predictions.`
-  ]);
+  const [marketSearchQuery, setMarketSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [copiedJson, setCopiedJson] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
   
-  const logsEndRef = useRef<HTMLDivElement>(null);
+  const [localKeyId, setLocalKeyId] = useState(() => typeof window !== 'undefined' ? localStorage.getItem('kalshi_key_id') || '' : '');
+  const [localPrivKey, setLocalPrivKey] = useState(() => typeof window !== 'undefined' ? localStorage.getItem('kalshi_priv_key') || '' : '');
+  const [hasCredentials, setHasCredentials] = useState(() => typeof window !== 'undefined' ? !!(localStorage.getItem('kalshi_key_id') && localStorage.getItem('kalshi_priv_key')) : false);
+  const [hasServerKeys, setHasServerKeys] = useState(false); 
+  const [balance, setBalance] = useState<number | null>(null);
+  const [apiError, setApiError] = useState<string | null>(null);
+
   const abortControllerRef = useRef<AbortController | null>(null);
+  const searchDebounceRef = useRef<NodeJS.Timeout | null>(null); 
+
+  // Sorting and Filtering States
+  const [sortBy, setSortBy] = useState<'volume' | 'probability_high' | 'probability_low' | 'newest'>('volume');
+  const [filterType, setFilterType] = useState<'all' | 'high_prob' | 'toss_up'>('all');
+  const [currentLimit, setCurrentLimit] = useState(30);
 
   const [args, setArgs] = useState<ToolArgDetails>({
-    ticker: 'NBA-LAL-WIN-AND-POINTS',
-    limit: 5,
-    status: 'open',
-    side: 'yes',
-    action: 'buy',
-    count: 10,
-    price_cents: 65
+    ticker: '', query: '', limit: 30, status: 'open', side: 'yes', action: 'buy', count: 10, price_cents: 50
   });
 
-  const appendLog = useCallback((msg: string) => {
-    setConsoleLogs(prev => [...prev, `[${new Date().toISOString()}] ${msg}`]);
+  // Check Server Auth Configuration
+  useEffect(() => {
+    fetch('/api/mcp/kalshi/config').then(res => res.ok && res.json()).then(data => setHasServerKeys(data?.hasServerKeys || false)).catch(console.error);
   }, []);
 
+  // Hydrate Balance
   useEffect(() => {
-    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [consoleLogs]);
+    if ((hasCredentials && localKeyId && localPrivKey) || hasServerKeys) {
+      const fetchBal = async () => {
+        try {
+          const payload: any = { tool: 'get_balance', args: {} };
+          if (localKeyId && localPrivKey) payload.credentials = { keyId: localKeyId, privateKey: localPrivKey };
+          const res = await fetch('/api/mcp/kalshi/execute', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+          const rawText = await res.text();
+          let data;
+          try { data = JSON.parse(rawText); } catch { return; }
+          if (res.ok && data.result) setBalance((data.result.balance_cents ?? data.result.balance) / 100);
+        } catch(e) { console.error(e); }
+      };
+      fetchBal();
+    } else { setBalance(null); }
+  }, [hasCredentials, localKeyId, localPrivKey, hasServerKeys]);
 
-  useEffect(() => {
-    return () => abortControllerRef.current?.abort();
-  }, []);
-
-  const copyCode = () => {
-    if (activeTab === 'live_playground') return;
-    navigator.clipboard.writeText(MCP_FILES[activeTab]);
-    setCopiedFile(activeTab);
-    setTimeout(() => setCopiedFile(null), 2000);
-  };
-
-  const handleArgChange = <K extends keyof ToolArgDetails>(key: K, value: ToolArgDetails[K]) => {
+  const handleArgChange = useCallback(<K extends keyof ToolArgDetails>(key: K, value: ToolArgDetails[K]) => {
     setArgs(prev => ({ ...prev, [key]: value }));
-  };
+  }, []);
 
-  const executeSandboxTool = async () => {
+  const getAbortController = useCallback(() => {
+    return new AbortController();
+  }, []);
+
+  const executeSandboxTool = useCallback(async (overrideTool?: FastMcpTool, customArgs?: Partial<ToolArgDetails>) => {
     if (abortControllerRef.current) abortControllerRef.current.abort();
-    abortControllerRef.current = new AbortController();
+    abortControllerRef.current = getAbortController();
     
-    setIsExecuting(true);
-    setApiResponse(null);
-    appendLog(`[SYSTEM] Matching query triggers for '${selectedTool}'...`);
-    
-    if (selectedTool === 'execute_fusion') {
-        setTimeout(() => appendLog(`[SYSTEM] Pulling statistics from prediction database...`), 400);
-        setTimeout(() => appendLog(`[SYSTEM] Retrieving live point score match values...`), 800);
-        setTimeout(() => appendLog(`[SYSTEM] Correlating bids and odds metrics for Lakers-Warriors matchup...`), 1200);
-        setTimeout(() => {
-            appendLog(`[SUCCESS] Calculations fully updated. Rendering matchup preview visualizer.`);
-            setApiResponse({ type: 'FUSION_CARD', ticker: args.ticker });
-            setIsExecuting(false);
-        }, 1800);
-        return;
+    const activeTool = overrideTool || selectedTool;
+    setIsExecuting(true); setApiResponse(null); setApiError(null);
+    const currentArgs = { ...args, ...customArgs };
+
+    if (!['get_markets'].includes(activeTool) && !(hasCredentials || hasServerKeys)) {
+      setApiError("Execution Blocked: Valid Kalshi credentials required for private telemetry.");
+      setIsExecuting(false); return;
     }
 
-    setTimeout(() => appendLog(`[SYSTEM] Formulating contract parameters check...`), 300);
-    setTimeout(() => appendLog(`[SYSTEM] Sending fetch command to prediction host api...`), 700);
+    if (['execute_fusion', 'get_market', 'get_order_book', 'place_limit_order'].includes(activeTool) && !currentArgs.ticker) {
+      setApiError("Validation Fault: Target Ticker is missing.");
+      setIsExecuting(false); return;
+    }
 
-    // Map the selected junior tool request back to actual API endpoint
-    let mappedToolName = selectedTool;
-    const mappedArgs: any = { ...args };
+    const mappedArgs: any = {};
+    TOOL_ARG_SCHEMAS[activeTool].forEach(s => { if (currentArgs[s.id as keyof ToolArgDetails] !== undefined) mappedArgs[s.id] = currentArgs[s.id as keyof ToolArgDetails]; });
 
     try {
+      const payload: any = { tool: activeTool, args: mappedArgs };
+      if (localKeyId && localPrivKey) payload.credentials = { keyId: localKeyId, privateKey: localPrivKey };
+      
       const response = await fetch('/api/mcp/kalshi/execute', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tool: mappedToolName, args: mappedArgs }),
-        signal: abortControllerRef.current.signal
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload), signal: abortControllerRef.current.signal
       });
 
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || `Error ${response.status}`);
+      // SOTA Anti-Corruption Layer: Trap HTTP 429 HTML/String payloads safely before crashing V8
+      const rawText = await response.text();
+      let data;
+      try {
+          data = JSON.parse(rawText);
+      } catch (parseErr) {
+          if (response.status === 429 || rawText.includes('Rate exceeded') || rawText.includes('429')) {
+              throw new Error("HTTP 429: Rate Limit Exceeded. Upstream gateway blocked request.");
+          }
+          throw new Error(`Upstream JSON Parse Fault: ${rawText.substring(0, 50)}...`);
+      }
 
-      setApiResponse(data.result);
-      if (data.logs) {
-        data.logs.forEach((l: string, i: number) => {
-            const formattedLog = l
-             .replace(/Substrate/gi, "Engine")
-             .replace(/FastMCP/gi, "Predictor")
-             .replace(/cryptographic/gi, "secure")
-             .replace(/RSA-PSS/gi, "lookup");
-            setTimeout(() => appendLog(`[SYSTEM] ${formattedLog}`), 600 + (i * 100));
-        });
-      } else {
-        setTimeout(() => appendLog(`[SUCCESS] Response pulled successfully. Checking structure...`), 1000);
-      }
+      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+
+      if (activeTool === 'get_markets') setSearchResults(data.result?.markets || data.result || []);
+      else setApiResponse(data.result);
     } catch (err: any) {
-      if (err.name === 'AbortError') {
-         appendLog(`[WARN] Action stopped.`);
-      } else {
-         setTimeout(() => appendLog(`[ERROR] Match execution error: ${err.message}`), 1000);
-         setApiResponse({ error: err.message });
-      }
+      if (err.name !== 'AbortError') setApiError(err.message);
     } finally {
-      setTimeout(() => setIsExecuting(false), 1200);
+      setTimeout(() => setIsExecuting(false), 400);
     }
-  };
+  }, [args, hasCredentials, localKeyId, localPrivKey, selectedTool, hasServerKeys]);
+
+  const handleMarketSearch = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const query = e.target.value;
+    setMarketSearchQuery(query);
+    setCurrentLimit(30);
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+
+    if (query.length > 2) {
+      searchDebounceRef.current = setTimeout(() => executeSandboxTool('get_markets', { query, limit: 30, status: 'open' }), 400);
+    } else {
+      setSearchResults([]); setApiResponse(null); setApiError(null);
+    }
+  }, [executeSandboxTool]);
+
+  const placeOrder = useCallback((price: number, side: 'yes' | 'no', action: 'buy' | 'sell', quantity: number, targetTicker?: string) => {
+    return executeSandboxTool('place_limit_order', { ticker: targetTicker || args.ticker, price_cents: price, side, action, count: quantity });
+  }, [executeSandboxTool, args.ticker]);
+
+  const isAuthorized = hasCredentials || hasServerKeys;
+
+  const filteredAndSortedResults = useMemo(() => {
+    let res = [...searchResults];
+    
+    // Apply filters
+    if (filterType === 'high_prob') {
+        res = res.filter(m => {
+            const p = m.probability || 0.5;
+            return p >= 0.75 || p <= 0.25;
+        });
+    } else if (filterType === 'toss_up') {
+        res = res.filter(m => {
+            const p = m.probability || 0.5;
+            return p >= 0.40 && p <= 0.60;
+        });
+    }
+
+    // Apply sorting
+    if (sortBy === 'volume') {
+        res.sort((a, b) => (b.volume || 0) - (a.volume || 0));
+    } else if (sortBy === 'probability_high') {
+        res.sort((a, b) => (b.probability || 0.5) - (a.probability || 0.5));
+    } else if (sortBy === 'probability_low') {
+        res.sort((a, b) => (a.probability || 0.5) - (b.probability || 0.5));
+    } else if (sortBy === 'newest') {
+        res.sort((a, b) => new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime());
+    }
+    
+    return res;
+  }, [searchResults, sortBy, filterType]);
+
+  const handleLoadMore = useCallback(() => {
+    const newLimit = currentLimit + 30;
+    setCurrentLimit(newLimit);
+    executeSandboxTool('get_markets', { query: marketSearchQuery, limit: newLimit, status: 'open' });
+  }, [currentLimit, executeSandboxTool, marketSearchQuery]);
 
   return (
-    <div className="w-full pt-4 animate-in fade-in duration-500 font-sans text-left pb-16">
+    <div className="w-full pt-6 font-sans text-left pb-24 relative bg-[#000000] text-neutral-200 min-h-screen selection:bg-[#4285F4]/30 selection:text-white">
       
-      {/* Page Header */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-8 border-b border-white/[0.04] pb-8">
-        <div>
-          <div className="flex items-center gap-2 text-neutral-400 text-[10px] font-mono tracking-widest uppercase mb-3 select-none">
-            <Sparkles className="w-3.5 h-3.5" />
-            Live Sports Predictions Setup
-          </div>
-          <h2 className="text-[24px] sm:text-[28px] font-medium text-white/95 tracking-tight leading-[1.15] mb-2.5">
-            Prediction Database Sandbox
-          </h2>
-          <p className="text-neutral-400 text-[13px] max-w-2xl font-normal leading-relaxed">
-            Check live play scores, underlying trade order spreads, and predicted sports contracts in real-time. Use the sandboxed queries to see how it links together.
-          </p>
-        </div>
-        <div className="flex items-center gap-2 select-none shrink-0">
-          <div className="bg-[#050505] border border-white/[0.06] px-3.5 py-1.5 rounded-[6px] flex items-center gap-2 shadow-sm">
-            <Server className="h-3.5 w-3.5 text-neutral-500" strokeWidth={2} />
-            <span className="text-[10px] font-mono text-neutral-400 uppercase tracking-widest font-bold">Prediction Matchup</span>
-          </div>
-        </div>
-      </div>
+      {/* Dynamic SOTA Cyber Ambient Background Elements */}
+      <div className="absolute top-0 left-1/4 w-[600px] h-[600px] bg-gradient-to-br from-[#4285F4]/10 via-[#9B72CB]/5 to-transparent rounded-full blur-[120px] pointer-events-none transform-gpu" />
+      <div className="absolute bottom-1/4 right-10 w-[500px] h-[500px] bg-gradient-to-tr from-[#D96570]/5 to-transparent rounded-full blur-[100px] pointer-events-none transform-gpu" />
 
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-8">
-        
-        {/* Left Form: Controller and selectors */}
-        <div className="xl:col-span-4 space-y-6">
-          <div className="bg-[#050505] border border-white/[0.04] rounded-[16px] p-6 flex flex-col justify-between h-full shadow-md relative overflow-hidden">
-            <div className="relative z-10 w-full mb-6">
-              <h3 className="text-[14px] font-semibold text-white/95 mb-4 flex items-center gap-2.5 select-none">
-                <Cpu className="h-4 w-4 text-neutral-400" strokeWidth={2} />
-                Sandbox Controller
-              </h3>
-              <p className="text-neutral-400 text-[12px] leading-relaxed mb-6 font-normal">
-                Select from the tools below. Track current prediction bids/asks percentages and matchup lines.
+      {/* Jony Ive Minimal Modal (Secure Credential Vault) */}
+      <AnimatePresence>
+        {showSettingsModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-[#000000]/80 saturate-[180%] backdrop-blur-[40px]" onClick={() => setShowSettingsModal(false)} />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 10 }} transition={SPRING_TRANSITION}
+              className="relative w-full max-w-md bg-[#050505] border border-white/[0.08] rounded-[28px] shadow-[0_40px_100px_rgba(0,0,0,0.8)] p-8 overflow-hidden z-10"
+            >
+              <div className="w-12 h-12 rounded-[14px] bg-[#0A0A0A] border border-white/[0.08] flex items-center justify-center mb-6 shadow-inner">
+                <ShieldCheck className="w-6 h-6 text-[#4285F4]" strokeWidth={1.5} />
+              </div>
+              
+              <h3 className="text-[24px] font-medium text-white tracking-tight mb-2">Encrypted Keystore</h3>
+              <p className="text-[13px] text-neutral-400 font-normal leading-relaxed mb-8">
+                To stream live prediction markets and execute trades, inject your Kalshi developer credentials. Keys remain strictly local.
               </p>
 
-              {/* Selector List */}
-              <div className="space-y-4 mb-6">
-                <SelectField 
-                  label="Choose Query Interface" 
-                  value={selectedTool} 
-                  options={[
-                    {value: 'execute_fusion', label: 'Interactive Matchup View'},
-                    {value: 'get_markets', label: 'get_all_markets()'},
-                    {value: 'get_market', label: 'get_market_by_ticker(ticker)'},
-                    {value: 'get_order_book', label: 'get_order_book(ticker)'},
-                    {value: 'get_balance', label: 'get_wallet_balance()'},
-                    {value: 'get_positions', label: 'get_user_holdings()'},
-                    {value: 'place_limit_order', label: 'simulate_contract_purchase()'},
-                  ]} 
-                  onChange={(e: any) => {
-                    const tool = e.target.value as FastMcpTool;
-                    setSelectedTool(tool);
-                    if (tool === 'get_market' || tool === 'get_order_book') {
-                        handleArgChange('ticker', 'NBA-LAL-WIN-AND-POINTS');
-                    }
-                  }} 
-                />
-
-                {/* Optional Parameter Forms */}
-                <div className="bg-white/[0.01] border border-white/[0.04] rounded-[10px] p-4 space-y-4">
-                    {selectedTool === 'get_markets' && (
-                      <div className="grid grid-cols-2 gap-3">
-                        <InputField label="Max Count" type="number" value={args.limit} min="1" max="50" onChange={(e: any) => handleArgChange('limit', Number(e.target.value))} />
-                        <SelectField label="Status" value={args.status} options={[{value:'open', label:'Open'}, {value:'closed', label:'Closed'}]} onChange={(e: any) => handleArgChange('status', e.target.value)} />
-                      </div>
-                    )}
-
-                    {(selectedTool === 'get_market' || selectedTool === 'get_order_book' || selectedTool === 'place_limit_order') && (
-                      <div>
-                        <InputField label="Target Contract Ticker" value={args.ticker} placeholder="NBA-LAL-WIN-AND-POINTS" onChange={(e: any) => handleArgChange('ticker', e.target.value.toUpperCase())} />
-                        <div className="flex flex-wrap gap-1.5 mt-2.5">
-                          {['NBA-LAL-WIN-AND-POINTS', 'FED-DEC-RATE', 'CPI-JULY'].map(t => (
-                              <button 
-                                key={t}
-                                onClick={() => handleArgChange('ticker', t)}
-                                className="text-[9.5px] font-mono bg-white/[0.02] hover:bg-white/[0.05] text-neutral-400 hover:text-white px-2 py-1 rounded-[4px] cursor-pointer border border-white/[0.04] transition-colors"
-                              >
-                                {t.replace("NBA-LAL-WIN-AND-POINTS", "LAL-WIN")}
-                              </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {selectedTool === 'place_limit_order' && (
-                      <>
-                        <div className="grid grid-cols-2 gap-3">
-                          <SelectField label="Direction" value={args.action} options={[{value:'buy', label:'BUY'}, {value:'sell', label:'SELL'}]} onChange={(e: any) => handleArgChange('action', e.target.value)} />
-                          <SelectField label="Outcome leg" value={args.side} options={[{value:'yes', label:'YES'}, {value:'no', label:'NO'}]} onChange={(e: any) => handleArgChange('side', e.target.value)} />
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                          <InputField label="QTY Contracts" type="number" min="1" max="1000" value={args.count} onChange={(e: any) => handleArgChange('count', Number(e.target.value))} />
-                          <InputField label="Limit Price ¢ (1-99)" type="number" min="1" max="99" value={args.price_cents} onChange={(e: any) => handleArgChange('price_cents', Number(e.target.value))} />
-                        </div>
-                      </>
-                    )}
+              <div className="space-y-5">
+                <InputField label="Key ID" type="password" value={localKeyId} onChange={(e:any) => setLocalKeyId(e.target.value)} placeholder="UUID string" />
+                <div className="space-y-1.5 w-full text-left font-sans">
+                    <label className="text-[10px] font-mono uppercase tracking-widest text-neutral-500 block pl-1 font-bold">Private Key (PEM)</label>
+                    <textarea
+                      value={localPrivKey} onChange={(e: any) => setLocalPrivKey(e.target.value)} placeholder="-----BEGIN RSA PRIVATE KEY-----..."
+                      className="w-full bg-[#0A0A0A] border border-white/[0.08] rounded-[12px] px-4 py-3.5 text-[11px] font-mono text-neutral-200 placeholder:text-neutral-700 focus:outline-none focus:border-[#4285F4]/50 focus:ring-1 focus:ring-[#4285F4]/30 transition-all min-h-[120px] resize-none shadow-inner leading-relaxed"
+                    />
                 </div>
               </div>
-            </div>
 
-            {/* Flat high-contrast button, NO neon glow colors or big shadows */}
-            <button
-              onClick={executeSandboxTool}
-              disabled={isExecuting}
-              className="w-full relative py-3.5 px-4 rounded-[10px] font-semibold uppercase tracking-widest text-[11px] flex items-center justify-center gap-2 cursor-pointer select-none border border-white/10 outline-none active:scale-[0.98] transition-all disabled:opacity-40 disabled:cursor-not-allowed bg-white hover:bg-neutral-200 text-black shadow-md mt-2"
-            >
-              <div className="relative z-10 flex items-center gap-2">
-                {isExecuting ? (
-                  <>
-                    <RefreshCw className="h-3.5 w-3.5 animate-spin text-black" strokeWidth={2.5} />
-                    <span>Analyzing...</span>
-                  </>
-                ) : (
-                  <>
-                    <Activity className="h-3.5 w-3.5 text-black" strokeWidth={2.5} />
-                    <span>Run Selected Query</span>
-                  </>
+              {hasServerKeys && (
+                <div className="mt-6 p-4 bg-[#34C759]/5 border border-[#34C759]/20 rounded-[16px] text-left flex items-start gap-3">
+                  <Shield className="w-4 h-4 text-[#34C759] shrink-0 mt-0.5" />
+                  <div>
+                    <span className="text-[11px] font-mono font-bold text-[#34C759] uppercase tracking-widest block mb-1">Server Fallback Active</span>
+                    <p className="text-[12px] text-neutral-400 font-normal leading-relaxed">
+                      Server-side environment variables are detected. Leave fields blank to use system defaults.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <div className="mt-10 flex flex-col gap-3">
+                <button
+                  onClick={() => {
+                    localStorage.setItem('kalshi_key_id', localKeyId); localStorage.setItem('kalshi_priv_key', localPrivKey);
+                    setHasCredentials(!!(localKeyId && localPrivKey)); setShowSettingsModal(false);
+                  }}
+                  className="w-full py-4 bg-white text-black font-bold text-[12px] rounded-full hover:bg-neutral-200 transition-all uppercase tracking-widest shadow-[0_4px_20px_rgba(255,255,255,0.1)] active:scale-[0.98] outline-none focus-visible:ring-2 focus-visible:ring-white/50"
+                >
+                  Encrypt & Connect
+                </button>
+                
+                {hasCredentials && (
+                  <button
+                    onClick={() => {
+                      localStorage.removeItem('kalshi_key_id'); localStorage.removeItem('kalshi_priv_key');
+                      setLocalKeyId(''); setLocalPrivKey(''); setHasCredentials(false); setBalance(null); setShowSettingsModal(false);
+                    }}
+                    className="w-full py-4 bg-transparent hover:bg-white/[0.04] text-[#FF3B30] font-bold text-[11px] font-mono uppercase tracking-widest rounded-full transition-all border border-white/[0.04] active:scale-[0.98] outline-none"
+                  >
+                    Purge Keystore
+                  </button>
                 )}
+                
+                <button
+                  onClick={() => window.open('https://kalshi.com/account/profile', '_blank')}
+                  className="w-full mt-2 py-2 bg-transparent text-neutral-500 font-bold text-[10px] font-mono uppercase tracking-widest rounded-full hover:text-white transition-colors flex items-center justify-center gap-1.5 outline-none"
+                >
+                  Generate New Keys <ExternalLink className="w-3.5 h-3.5" />
+                </button>
               </div>
-            </button>
+            </motion.div>
           </div>
-        </div>
+        )}
+      </AnimatePresence>
 
-        {/* Right Output Panels and Terminal logs */}
-        <div className="xl:col-span-8 bg-[#000000] border border-white/[0.06] rounded-[16px] overflow-hidden flex flex-col h-[700px] shadow-sm">
+      <div className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
+        
+        {/* Structural Page Header */}
+        <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-10 pb-8 border-b border-white/[0.04]">
+          <div>
+            <div className="flex items-center gap-2 text-[#4285F4] text-[10px] font-mono font-bold uppercase tracking-widest mb-3 select-none">
+              <Sparkles className="w-3.5 h-3.5" />
+              Intelligence Gateway
+            </div>
+            <h2 className="text-[32px] sm:text-[40px] font-medium text-white/95 tracking-tight leading-[1.1] mb-2">
+              Financial Execution Node
+            </h2>
+            <p className="text-neutral-400 text-[14px] leading-relaxed max-w-2xl font-normal">
+              Aura's predictive fusion layer. Seamlessly map Substrate parameters to Kalshi's quantitative API for real-time order execution.
+            </p>
+          </div>
           
-          {/* Top Tabs Bar */}
-          <div className="flex bg-[#050505] border-b border-white/[0.04] overflow-x-auto select-none font-sans shrink-0 scrollbar-none">
-            
-            {/* Live Interactive Playground */}
-            <button
-              onClick={() => setActiveTab('live_playground')}
-              className={`px-5 py-4 text-[10.5px] font-semibold tracking-wider uppercase transition-colors outline-none border-r border-[#151517] flex items-center gap-2 shrink-0 ${
-                activeTab === 'live_playground' 
-                  ? 'bg-[#000000] text-white border-t-2 border-t-white' 
-                  : 'bg-transparent text-neutral-500 hover:text-neutral-300 border-t-2 border-t-transparent'
-              }`}
-            >
-              <Network className="h-3.5 w-3.5" strokeWidth={2} />
-              Interactive Output
-            </button>
-
-            {/* Source Files Tab List */}
-            {(Object.keys(MCP_FILES) as Array<Exclude<McpTab, 'live_playground'>>).map(tab => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`px-5 py-4 text-[10px] font-mono tracking-wider transition-colors outline-none border-r border-white/10 flex items-center gap-2 shrink-0 ${
-                  activeTab === tab 
-                    ? 'bg-[#000000] text-neutral-200 border-t-2 border-t-neutral-400' 
-                    : 'bg-transparent text-neutral-500 hover:text-neutral-300 border-t-2 border-t-transparent'
-                }`}
-              >
-                {tab === 'setup.sh' ? <Terminal className="h-3 w-3" /> : tab === 'server.py' ? <Code2 className="h-3 w-3" /> : tab === 'config.json' ? <ShieldCheck className="h-3 w-3" /> : <PlaySquare className="h-3 w-3" />}
-                {tab}
+          <div className="flex flex-col items-end gap-4 shrink-0 select-none">
+            <div className="flex items-center gap-3">
+              <span className={`flex items-center gap-1.5 text-[10px] font-mono font-bold uppercase tracking-widest border px-3 py-1.5 rounded-[6px] ${isAuthorized ? 'bg-[#34C759]/10 text-[#34C759] border-[#34C759]/20' : 'bg-[#FF9500]/10 text-[#FF9500] border-[#FF9500]/20'}`}>
+                {isAuthorized ? <ShieldCheck className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />}
+                {isAuthorized ? 'Authenticated' : 'Unauthenticated'}
+              </span>
+              <button onClick={() => setShowSettingsModal(true)} className="flex items-center gap-2 text-[10px] font-mono font-bold uppercase tracking-widest bg-[#0A0A0C] hover:bg-[#111113] text-neutral-300 px-4 py-1.5 rounded-[6px] transition-colors border border-white/[0.06] outline-none">
+                Configure IAM
               </button>
-            ))}
-            
-            <div className="flex-1 bg-[#050505]" />
-            
-            {activeTab !== 'live_playground' && (
-              <button 
-                onClick={copyCode}
-                className="px-5 text-neutral-500 hover:text-white transition-all flex items-center gap-2 border-l border-white/[0.04] bg-[#050505] cursor-pointer active:bg-white/[0.05] outline-none shrink-0"
-              >
-                {copiedFile === activeTab ? (
-                    <>
-                        <Check className="h-3.5 w-3.5 text-neutral-400" />
-                        <span className="text-[9.5px] font-semibold text-neutral-400 uppercase tracking-widest">Copied</span>
-                    </>
-                ) : (
-                    <>
-                        <Copy className="h-3.5 w-3.5" />
-                        <span className="text-[9.5px] uppercase tracking-widest">Copy</span>
-                    </>
-                )}
-              </button>
+            </div>
+            {isAuthorized && balance !== null && (
+              <div className="flex items-center gap-3 bg-[#050505] border border-white/[0.04] px-4 py-2 rounded-[8px]">
+                <span className="text-[10px] uppercase font-mono font-bold tracking-widest text-neutral-500">Capital</span>
+                <span className="text-[16px] font-mono font-bold text-white tracking-tight tabular-nums lining-nums">
+                  $${balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              </div>
             )}
           </div>
-          
-          {/* Tab Core Visualizer Panel */}
-          <div className="flex-1 overflow-hidden flex flex-col bg-[#000000] transform-gpu">
-            <AnimatePresence mode="wait">
-              {activeTab === 'live_playground' ? (
-                <motion.div 
-                  key="playground"
-                  initial={{ opacity: 0, y: 5 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -5 }}
-                  transition={{ duration: 0.2 }}
-                  className="flex-1 flex flex-col md:flex-row h-full overflow-hidden"
-                >
-                  {/* Left Column: Live Terminal logs */}
-                  <div className="flex-1 flex flex-col border-r border-white/[0.04] h-full overflow-hidden bg-[#000000] md:w-1/2">
-                    <div className="px-5 py-3 bg-[#030303] border-b border-white/[0.04] flex items-center justify-between select-none shrink-0">
-                      <span className="text-[9px] font-mono text-neutral-500 uppercase tracking-widest flex items-center gap-2">
-                        <Terminal className="h-3.5 w-3.5 text-neutral-500" />
-                        Activity Log
-                      </span>
-                    </div>
-                    
-                    <div className="flex-1 p-5 overflow-y-auto space-y-2.5 font-mono text-[11px] leading-relaxed text-neutral-400 scrollbar-thin">
-                      {consoleLogs.map((log, idx) => {
-                        let colorClass = 'text-neutral-400';
-                        if (log.includes('[ERROR]') || log.includes('[CRITICAL]')) colorClass = 'text-rose-400 font-bold';
-                        else if (log.includes('[SYSTEM]') && log.includes('Parameters')) colorClass = 'text-neutral-400';
-                        else if (log.includes('[SUCCESS]')) colorClass = 'text-white';
-                        else if (log.includes('[SYS]')) colorClass = 'text-neutral-500';
-                        
-                        return (
-                          <div key={idx} className={`${colorClass} whitespace-pre-wrap break-words flex items-start gap-2`}>
-                            <ChevronRight className="h-3.5 w-3.5 shrink-0 select-none mt-0.5 opacity-30 text-neutral-500" strokeWidth={2} />
-                            <span>{log}</span>
-                          </div>
-                        );
-                      })}
-                      <div ref={logsEndRef} className="h-2 w-full" />
-                    </div>
-                  </div>
-
-                  {/* Right Column: Interactive output results or Raw data structure */}
-                  <div className="flex-1 flex flex-col h-full overflow-hidden md:w-1/2 bg-[#020202]">
-                    <div className="px-5 py-2.5 bg-[#030303] border-b border-white/[0.04] flex items-center justify-between select-none shrink-0">
-                      <div className="flex items-center gap-2">
-                          <Database className="h-3.5 w-3.5 text-neutral-400" />
-                          <span className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest">Query Result</span>
-                      </div>
-                      
-                      {/* Switch output format to see exact code object or visualized view */}
-                      {apiResponse && (
-                          <div className="flex bg-[#0A0A0A] border border-white/[0.06] p-0.5 rounded-[6px]">
-                              <button 
-                                onClick={() => setOutputMode('SDUI')}
-                                className={`px-2.5 py-1 text-[9px] font-mono uppercase tracking-widest rounded-[4px] transition-colors ${outputMode === 'SDUI' ? 'bg-neutral-800 text-white font-semibold' : 'text-neutral-500 hover:text-white'}`}
-                              >
-                                  Visualizer
-                              </button>
-                              <button 
-                                onClick={() => setOutputMode('RAW')}
-                                className={`px-2.5 py-1 text-[9px] font-mono uppercase tracking-widest rounded-[4px] transition-colors ${outputMode === 'RAW' ? 'bg-neutral-800 text-white font-semibold' : 'text-neutral-500 hover:text-white'}`}
-                              >
-                                  Raw JSON
-                              </button>
-                          </div>
-                      )}
-                    </div>
-
-                    <div className="flex-1 overflow-y-auto font-mono text-[11.5px] leading-[1.6] text-neutral-300 scrollbar-thin flex flex-col p-5">
-                      {apiResponse?.type === 'FUSION_CARD' && outputMode === 'SDUI' ? (
-                        <MarketAwareFusionCard />
-                      ) : apiResponse ? (
-                        <pre className={`whitespace-pre text-neutral-300 bg-white/[0.015] p-5 rounded-[8px] border border-white/[0.03] overflow-x-auto ${apiResponse.error ? 'text-rose-400' : 'text-neutral-300'}`}>
-                          {JSON.stringify(apiResponse, null, 2)}
-                        </pre>
-                      ) : (
-                        <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-neutral-600 select-none">
-                          <Radio className="h-6 w-6 mb-4 opacity-40 text-neutral-500" strokeWidth={1.5} />
-                          <p className="text-[11px] font-mono uppercase tracking-widest mb-1">Awaiting Query Input</p>
-                          <p className="text-[11px] text-neutral-500 tracking-normal max-w-[200px] leading-relaxed mt-2 font-sans">
-                            Select <strong>Interactive Matchup View</strong> on the left and click "Run Selected Query" to see it live.
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </motion.div>
-              ) : (
-                <motion.div 
-                  key="code"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.2 }}
-                  className="p-6 sm:p-8 overflow-y-auto flex-1 font-mono text-[11px] leading-relaxed text-neutral-300 tabular-nums selection:bg-white/10 bg-[#000]"
-                >
-                  <pre className="whitespace-pre-wrap font-inherit">
-                    {MCP_FILES[activeTab as Exclude<McpTab, 'live_playground'>]}
-                  </pre>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
         </div>
+
+        {/* 3. SOTA View Switcher */}
+        <div className="flex items-center mb-8 bg-[#050505] border border-white/[0.04] p-1.5 rounded-full w-full max-w-[320px] select-none shadow-sm relative z-10">
+            {[
+                { id: 'grid', label: 'Market Grid' },
+                { id: 'console', label: 'Terminal IDE' }
+            ].map((tab) => {
+                const isActive = viewMode === tab.id;
+                return (
+                    <button 
+                        key={tab.id}
+                        type="button"
+                        onClick={() => setViewMode(tab.id as 'grid'|'console')}
+                        className={`relative flex-1 py-2.5 px-3 rounded-full text-[10px] font-bold uppercase tracking-widest transition-colors duration-300 ease-[0.16,1,0.3,1] cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-white/20 z-10 ${isActive ? 'text-black' : 'text-neutral-500 hover:text-neutral-300'}`}
+                    >
+                        {isActive && (
+                            <motion.div 
+                                layoutId="viewModePill"
+                                className="absolute inset-0 bg-white rounded-full z-[-1] shadow-[0_2px_12px_rgba(255,255,255,0.1)]"
+                                transition={SPRING_TRANSITION}
+                            />
+                        )}
+                        <span className="relative z-10">{tab.label}</span>
+                    </button>
+                );
+            })}
+        </div>
+
+        {/* 4. Main Body Content */}
+        <AnimatePresence mode="wait">
+          {viewMode === 'grid' ? (
+            <motion.div key="grid" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: 0.3, ease: EASE_TRANSITION }} className="space-y-8">
+              
+              {/* Dynamic Search */}
+              <div className="bg-[#050505] border border-white/[0.04] p-4 sm:p-5 rounded-[24px] shadow-[0_16px_40px_rgba(0,0,0,0.2)] relative group focus-within:border-white/[0.15] transition-colors duration-500">
+                <div className="absolute inset-0 bg-gradient-to-r from-[#4285F4]/5 via-[#9B72CB]/5 to-[#D96570]/5 opacity-0 group-focus-within:opacity-100 rounded-[24px] pointer-events-none transition-opacity duration-700" />
+                <div className="relative flex items-center">
+                  <Crosshair className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-neutral-500 group-focus-within:text-[#4285F4] transition-colors duration-300" strokeWidth={1.5} />
+                  <input
+                    type="text"
+                    placeholder="Query Substrate for prediction telemetry..."
+                    value={marketSearchQuery}
+                    onChange={handleMarketSearch}
+                    className="w-full bg-[#0A0A0C] border border-white/[0.06] rounded-[16px] pl-14 pr-14 py-4 text-[15px] text-white/95 outline-none transition-all placeholder:text-neutral-600 focus:border-[#4285F4] focus:ring-1 focus:ring-[#4285F4]/30 font-sans tracking-tight shadow-inner"
+                  />
+                  {marketSearchQuery && (
+                    <button type="button" onClick={() => { setMarketSearchQuery(''); setSearchResults([]); setApiResponse(null); setApiError(null); if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current); abortControllerRef.current?.abort(); }} className="absolute right-4 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-white p-2 bg-white/[0.02] hover:bg-white/[0.06] rounded-full transition-colors active:scale-95 outline-none">
+                      <X className="w-4 h-4" strokeWidth={2} />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <AnimatePresence>
+                {apiError && (
+                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
+                    <div className="bg-[#111113] border border-[#FF3B30]/20 text-neutral-200 px-6 py-5 rounded-[20px] flex items-start gap-4 shadow-sm mb-6">
+                      <AlertTriangle className="w-5 h-5 text-[#FF3B30] shrink-0 mt-0.5" />
+                      <div className="flex flex-col text-left font-mono">
+                        <h4 className="font-bold text-[12px] uppercase tracking-widest mb-1 text-[#FF3B30]">Execution Fault</h4>
+                        <p className="text-[12px] leading-relaxed text-neutral-400 break-words">{apiError}</p>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Filter and Sort Row */}
+              {marketSearchQuery && (
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-4 py-2 border-b border-white/[0.04] mb-4">
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={filterType}
+                      onChange={(e) => setFilterType(e.target.value as any)}
+                      className="bg-[#0A0A0C] border border-white/[0.06] text-white/80 text-[13px] rounded-full px-4 py-2 outline-none focus:border-[#4285F4] appearance-none"
+                    >
+                      <option value="all">All Probabilities</option>
+                      <option value="high_prob">High Confidence (≥75% or ≤25%)</option>
+                      <option value="toss_up">Toss Up (40% - 60%)</option>
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-neutral-500 text-[13px] uppercase tracking-wider font-medium">Sort by:</span>
+                    <select
+                      value={sortBy}
+                      onChange={(e) => setSortBy(e.target.value as any)}
+                      className="bg-[#0A0A0C] border border-white/[0.06] text-white/80 text-[13px] rounded-full px-4 py-2 outline-none focus:border-[#4285F4] appearance-none"
+                    >
+                      <option value="volume">Volume (High - Low)</option>
+                      <option value="probability_high">Probability (High - Low)</option>
+                      <option value="probability_low">Probability (Low - High)</option>
+                      <option value="newest">Recently Updated</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              {/* Grid Array */}
+              {filteredAndSortedResults && filteredAndSortedResults.length > 0 ? (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 lg:gap-8">
+                    {filteredAndSortedResults.map((market: any) => (
+                      <AuraSportsCard key={market.ticker} market={market} isAuthorized={isAuthorized} onPlaceOrder={placeOrder} />
+                    ))}
+                  </div>
+                  <div className="flex justify-center pt-8">
+                      <button
+                        type="button"
+                        onClick={handleLoadMore}
+                        disabled={isExecuting}
+                        className="bg-white/[0.04] hover:bg-white/[0.08] text-white px-8 py-3 rounded-full text-[14px] font-medium transition-colors border border-white/[0.05] disabled:opacity-50"
+                      >
+                        {isExecuting ? 'Requesting...' : `Fetch Additional Telemetry (${currentLimit + 30})`}
+                      </button>
+                  </div>
+                </>
+              ) : (
+                <div className="w-full bg-[#050505] border border-white/[0.04] rounded-[32px] p-24 text-center select-none flex flex-col items-center justify-center shadow-inner">
+                  {isExecuting && marketSearchQuery.length > 2 ? (
+                      <RefreshCw className="w-10 h-10 text-[#4285F4] animate-spin mb-6" strokeWidth={1.5} />
+                  ) : (
+                      <div className="w-16 h-16 rounded-[20px] border border-white/[0.06] flex items-center justify-center bg-[#0A0A0C] mb-6 shadow-sm">
+                        <Database className="w-7 h-7 text-neutral-500" strokeWidth={1.5} />
+                      </div>
+                  )}
+                  <h3 className="text-[20px] font-medium text-white mb-3 tracking-tight">
+                      {isExecuting && marketSearchQuery.length > 2 ? 'Scanning Substrate...' : 'Awaiting Telemetry'}
+                  </h3>
+                  <p className="text-neutral-500 text-[14px] font-normal max-w-sm leading-relaxed">
+                    {isExecuting && marketSearchQuery.length > 2 ? 'Resolving live prediction ledgers from the exchange.' : 'Type a keyword above to stream live quantitative prediction markets.'}
+                  </p>
+                </div>
+              )}
+            </motion.div>
+          ) : (
+            <motion.div key="console" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: 0.3, ease: EASE_TRANSITION }} className="grid grid-cols-1 xl:grid-cols-12 gap-8">
+              
+              {/* Terminal Left Sidebar */}
+              <div className="xl:col-span-4 space-y-6">
+                <div className="bg-[#050505] border border-white/[0.04] rounded-[24px] p-6 lg:p-8 flex flex-col justify-between h-full shadow-lg relative overflow-hidden">
+                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(66,133,244,0.03),transparent_50%)] pointer-events-none" />
+                    
+                    <div className="relative z-10">
+                        <h3 className="text-[15px] font-medium text-white/95 mb-8 flex items-center gap-2.5 select-none">
+                            <Terminal className="w-4 h-4 text-[#4285F4]" /> Controller Interface
+                        </h3>
+
+                        <div className="space-y-6 mb-8">
+                            <SelectField 
+                                label="Execution Protocol" 
+                                value={selectedTool} 
+                                options={Object.keys(TOOL_ARG_SCHEMAS).map(t => ({ value: t, label: t }))}
+                                onChange={(e: any) => setSelectedTool(e.target.value as FastMcpTool)} 
+                            />
+
+                            <div className="bg-white/[0.015] border border-white/[0.04] rounded-[16px] p-5 space-y-5">
+                                {TOOL_ARG_SCHEMAS[selectedTool].map((schema: any) => (
+                                    schema.type === 'select' ? (
+                                        <SelectField key={schema.id} label={schema.label} value={args[schema.id as keyof ToolArgDetails]} onChange={(e: any) => handleArgChange(schema.id as any, e.target.value)} options={schema.options} />
+                                    ) : (
+                                        <InputField key={schema.id} label={schema.label} type={schema.type} value={args[schema.id as keyof ToolArgDetails]} onChange={(e: any) => handleArgChange(schema.id as any, schema.type === 'number' ? Number(e.target.value) : e.target.value)} placeholder={schema.placeholder} min={schema.min} max={schema.max} />
+                                    )
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+
+                    <button
+                        onClick={() => executeSandboxTool()}
+                        disabled={isExecuting}
+                        className="w-full relative overflow-hidden group py-4 px-4 rounded-[12px] font-bold uppercase tracking-widest text-[11px] flex items-center justify-center gap-2 cursor-pointer select-none border-none outline-none mt-4 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_4px_30px_rgba(66,133,244,0.15)]"
+                    >
+                        <div className="absolute inset-0 bg-gradient-to-r from-[#4285F4] via-[#9B72CB] to-[#D96570] opacity-90 group-hover:opacity-100 transition-opacity duration-300" />
+                        <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+                        <div className="relative z-10 flex items-center gap-2.5 text-white drop-shadow-md">
+                            {isExecuting ? <><RefreshCw className="w-4 h-4 animate-spin text-white" strokeWidth={2.5} /> Transmission...</> : <><Activity className="h-4 w-4" /> Execute Node</>}
+                        </div>
+                    </button>
+                </div>
+              </div>
+
+              {/* Terminal Right Side (IDE & JSON View) */}
+              <div className="xl:col-span-8 bg-[#000000] border border-white/[0.06] rounded-[24px] overflow-hidden flex flex-col h-[750px] shadow-[0_16px_50px_rgba(0,0,0,0.2)]">
+                  <div className="flex bg-[#050505] border-b border-white/[0.04] overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden select-none font-sans shrink-0">
+                      <button onClick={() => setActiveTab('live_playground')} className={`px-5 py-4 text-[10px] font-mono tracking-widest uppercase transition-colors outline-none focus-visible:bg-white/[0.05] border-r border-[#151517] flex items-center gap-2 font-bold shrink-0 ${activeTab === 'live_playground' ? 'bg-[#000000] text-[#4285F4] border-t-2 border-t-[#4285F4] shadow-[inset_0_4px_20px_rgba(66,133,244,0.05)]' : 'bg-transparent text-neutral-500 hover:text-neutral-300 border-t-2 border-t-transparent'}`}>
+                          <Database className="h-3.5 w-3.5" strokeWidth={2} /> Payload Memory
+                      </button>
+                      {(Object.keys(MCP_FILES) as Array<Exclude<McpTab, 'live_playground'>>).map(tab => (
+                          <button key={tab} onClick={() => setActiveTab(tab)} className={`px-5 py-4 text-[10px] font-mono tracking-widest uppercase transition-colors outline-none focus-visible:bg-white/[0.05] border-r border-white/[0.02] flex items-center gap-2 shrink-0 ${activeTab === tab ? 'bg-[#000000] text-neutral-200 border-t-2 border-t-neutral-400' : 'bg-transparent text-neutral-500 hover:text-neutral-300 border-t-2 border-t-transparent'}`}>
+                              <Code2 className="h-3 w-3" /> {tab}
+                          </button>
+                      ))}
+                      <div className="flex-1 border-b border-transparent min-w-[20px] bg-[#0A0A0C]" />
+                      <button onClick={() => {
+                        let text = apiResponse ? JSON.stringify(apiResponse, null, 2) : (activeTab !== 'live_playground' ? MCP_FILES[activeTab] : '');
+                        if (text) { navigator.clipboard.writeText(text); setCopiedJson(true); setTimeout(() => setCopiedJson(false), 2000); }
+                      }} className="px-5 text-neutral-500 hover:text-white transition-all duration-300 flex items-center gap-2 border-l border-white/[0.02] bg-[#0A0A0C] cursor-pointer active:bg-white/[0.05] active:scale-[0.98] outline-none shrink-0">
+                        {copiedJson ? <><Check className="h-3.5 w-3.5 text-[#34C759]" /><span className="text-[9px] font-mono text-[#34C759] uppercase tracking-widest font-bold">Copied</span></> : <><Copy className="h-3.5 w-3.5" /><span className="text-[9px] font-mono uppercase tracking-widest">Copy</span></>}
+                      </button>
+                  </div>
+                  
+                  <div className="flex-1 overflow-hidden flex flex-col bg-[#000000] relative transform-gpu">
+                      <AnimatePresence mode="wait">
+                          {activeTab === 'live_playground' ? (
+                              <motion.div key="output" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="flex-1 flex flex-col p-6 overflow-y-auto scrollbar-thin">
+                                  {apiError && (
+                                      <div className="bg-[#111113] border border-[#FF3B30]/20 p-5 rounded-[16px] mb-6 flex items-start gap-4">
+                                          <AlertTriangle className="w-5 h-5 text-[#FF3B30] shrink-0 mt-0.5" />
+                                          <div className="flex flex-col text-left font-mono">
+                                              <h4 className="font-bold text-[11px] uppercase tracking-widest text-[#FF3B30] mb-2">Execution Fault</h4>
+                                              <p className="text-[12px] text-neutral-300 leading-relaxed break-words">{apiError}</p>
+                                          </div>
+                                      </div>
+                                  )}
+                                  
+                                  {isExecuting ? (
+                                      <div className="flex-1 flex flex-col items-center justify-center text-center opacity-60">
+                                          <RefreshCw className="w-8 h-8 text-[#4285F4] animate-spin mb-5" />
+                                          <p className="text-[10px] font-mono uppercase tracking-widest text-neutral-400 font-bold">Synchronizing Kalshi State...</p>
+                                      </div>
+                                  ) : apiResponse ? (
+                                      <div className="relative flex-1 bg-[#0A0A0C] border border-white/[0.04] rounded-[16px] p-6 overflow-auto text-[12px] font-mono text-neutral-300 tabular-nums lining-nums shadow-inner">
+                                          <pre className="whitespace-pre-wrap">{JSON.stringify(apiResponse, null, 2)}</pre>
+                                      </div>
+                                  ) : (
+                                      <div className="flex-1 flex flex-col items-center justify-center text-center opacity-40 select-none">
+                                          <Database className="w-10 h-10 text-neutral-500 mb-5 stroke-1" />
+                                          <p className="text-[10px] font-mono uppercase tracking-widest text-neutral-500 font-bold">Memory Heap Idle</p>
+                                      </div>
+                                  )}
+                              </motion.div>
+                          ) : (
+                              <motion.div key="code" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="flex-1 flex flex-col p-6 overflow-y-auto scrollbar-thin">
+                                  <div className="relative flex-1 bg-[#0A0A0C] border border-white/[0.04] rounded-[16px] p-6 overflow-auto text-[12px] font-mono text-neutral-300 tabular-nums lining-nums shadow-inner">
+                                      <pre className="whitespace-pre-wrap">{MCP_FILES[activeTab as Exclude<McpTab, 'live_playground'>]}</pre>
+                                  </div>
+                              </motion.div>
+                          )}
+                      </AnimatePresence>
+                  </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );

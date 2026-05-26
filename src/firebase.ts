@@ -13,7 +13,8 @@ const provider = new GoogleAuthProvider();
 // Add all Google Workspace scopes requested by Aura
 provider.addScope('https://www.googleapis.com/auth/gmail.readonly');
 provider.addScope('https://www.googleapis.com/auth/calendar.events');
-provider.addScope('https://www.googleapis.com/auth/drive.readonly');
+provider.addScope('https://www.googleapis.com/auth/drive');
+provider.addScope('https://www.googleapis.com/auth/drive.file');
 provider.addScope('https://www.googleapis.com/auth/tasks');
 
 // In-Memory Google Access Token store

@@ -134,18 +134,18 @@ function calculateImpliedProbability(yesAsk: number, yesBid: number, lastPrice: 
 }
 
 async function fetchWithSla(url: string, timeoutMs = 15000): Promise<any> {
-    const controller = new AbortController();
-    const id = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-        const response = await fetch(url, { 
-            signal: controller.signal,
-            headers: { 'Accept': 'application/json' }
-        });
-        if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        return await response.json();
-    } finally {
-        clearTimeout(id);
-    }
+    const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Fetch timed out')), timeoutMs)
+    );
+
+    const fetchPromise = fetch(url, { 
+        headers: { 'Accept': 'application/json' }
+    });
+
+    const response = await Promise.race([fetchPromise, timeoutPromise]) as Response;
+    
+    if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    return await response.json();
 }
 
 // ============================================================================
@@ -185,7 +185,7 @@ export async function runKalshiMarketIngestion(db: Firestore, options: KalshiIng
         console.log(`${LOG_PREFIX} Fetching Events & Markets (limit=${limit})...`);
         const [rawEventsData, rawMarketsData] = await Promise.all([
             fetchWithSla(`${KALSHI_BASE_URL}/events?limit=${limit}&status=open`),
-            fetchWithSla(`${KALSHI_BASE_URL}/markets?limit=${limit}&status=open`)
+            fetchWithSla(`${KALSHI_BASE_URL}/markets?limit=${limit}&status=open&mve_filter=exclude`)
         ]);
 
         // --- STEP 2: Zod Firewall Verification ---
@@ -227,6 +227,11 @@ export async function runKalshiMarketIngestion(db: Firestore, options: KalshiIng
 
         // --- STEP 4: Map & Hydrate Markets and Snapshots ---
         for (const rawMarket of markets) {
+            // Strict filtration of Multivariate Event (MVE) combo/parlay contracts
+            if (rawMarket.market_mve_id || rawMarket.mve_ticker || (rawMarket.title && (rawMarket.title.toLowerCase().includes('[leg') || rawMarket.title.includes(',')))) {
+                continue;
+            }
+
             const marketId = `kalshi_mkt_${rawMarket.ticker}`;
             
             // Canonical Market Entity

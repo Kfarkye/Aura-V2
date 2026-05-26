@@ -46,7 +46,9 @@ export type AuraArtifactType =
   | 'GAME_SCHEDULE_ARTIFACT'
   | 'EMAIL_MIME_ARTIFACT'
   | 'YOUTUBE_MEDIA'
-  | 'BETTING_ANALYSIS';
+  | 'BETTING_ANALYSIS'
+  | 'WORKSPACE_MUTATION_ARTIFACT'
+  | 'DRIVE_DOC_ARTIFACT';
 
 // ============================================================================
 // Main Card Data Format

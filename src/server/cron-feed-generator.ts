@@ -122,7 +122,7 @@ export async function generateEditorialFeed(db: Firestore | any) {
     console.log(`${LOG_PREFIX} Initiating autonomous quantitative feed generation at ${currentDate}...`);
 
     const chat = ai.chats.create({
-        model: "gemini-2.5-flash", 
+        model: "gemini-3.5-flash", 
         config: {
             responseMimeType: "application/json",
             responseSchema: FeedItemSchema,
@@ -132,7 +132,7 @@ export async function generateEditorialFeed(db: Firestore | any) {
         }
     });
 
-    const prompt = `Synthesize the top 5 most consequential active sports events and market inefficiencies right now. (Current timestamp: ${currentDate}). Execute deep search grounding to verify all metrics before generating the output JSON.`;
+    const prompt = `Synthesize the top 5 most consequential active sports events and market inefficiencies right now, strictly based on current Google Search Trends for sports. (Current timestamp: ${currentDate}). Execute deep search grounding to verify all metrics before generating the output JSON.`;
     
     console.log(`${LOG_PREFIX} Generating structural candidates via Engine...`);
     
@@ -211,11 +211,11 @@ export async function generateEditorialFeed(db: Firestore | any) {
              const url = `https://${process.env.PUBLIC_DOMAIN}/story/${slug}`;
              const indexNowUrl = `https://api.indexnow.org/indexnow?url=${encodeURIComponent(url)}&key=${process.env.INDEXNOW_KEY}`;
              
-             const controller = new AbortController();
-             const timeout = setTimeout(() => controller.abort(), 3000); // 3-second strict timeout
+             const timeoutPromise = new Promise((_, reject) => {
+                 setTimeout(() => reject(new Error('Fetch timed out')), 3000);
+             }); // 3-second strict timeout
              
-             fetch(indexNowUrl, { signal: controller.signal })
-                 .finally(() => clearTimeout(timeout))
+             Promise.race([fetch(indexNowUrl), timeoutPromise])
                  .catch(() => { /* Silent fail for telemetry */ });
          }
     }

@@ -259,16 +259,15 @@ async function fetchJsonWithRetry(params: {
       espnFetchTelemetry.retryCount += 1;
     }
 
-    const controller = new AbortController();
     const startedAt = Date.now();
-    const timeoutId = setTimeout(() => {
-      controller.abort();
-    }, timeoutMs);
+    
+    let timeoutId: NodeJS.Timeout;
+    const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error('Fetch timed out')), timeoutMs);
+    });
 
     try {
-      const response = await fetch(url, {
-        signal: controller.signal
-      });
+      const response = await Promise.race([fetch(url), timeoutPromise]) as Response;
       if (!response.ok) {
         const status = response.status;
         const durationMs = Date.now() - startedAt;

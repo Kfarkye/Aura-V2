@@ -48,10 +48,18 @@ export function BettingAnglesCarousel({ data }: BettingAnglesListProps) {
   // Defensive Parsing: Memoized to prevent re-evaluation on parent renders
   const parsedAngles = useMemo<BettingAngle[]>(() => {
     try {
-      const parsed = JSON.parse(data);
-      return Array.isArray(parsed) ? parsed : [];
+      if (!data) return [];
+      let cleanData = data.trim();
+      // Remove any nested markdown code block syntax if the LLM hallucinated it
+      if (cleanData.startsWith('```json')) cleanData = cleanData.replace(/^```json/, '');
+      if (cleanData.startsWith('```')) cleanData = cleanData.replace(/^```/, '');
+      if (cleanData.endsWith('```')) cleanData = cleanData.replace(/```$/, '');
+      cleanData = cleanData.trim();
+      
+      const parsed = JSON.parse(cleanData);
+      return Array.isArray(parsed) ? parsed : (parsed?.angles && Array.isArray(parsed.angles) ? parsed.angles : []);
     } catch (e) {
-      console.error('[AURA:UI:FAULT] Failed to parse Betting Angles data');
+      console.warn('[AURA:UI] Betting Angles block contains text or conversational analysis rather than strict JSON. Rendering as standard text.');
       return [];
     }
   }, [data]);
@@ -59,7 +67,16 @@ export function BettingAnglesCarousel({ data }: BettingAnglesListProps) {
   const [angles, setAngles] = useState<BettingAngle[]>(parsedAngles);
   const [pinned, setPinned] = useState<Record<number, boolean>>({});
 
-  if (angles.length === 0) return null;
+  if (angles.length === 0) {
+      if (data && data.trim().length > 0) {
+          return (
+              <div className="bg-[#050505] p-6 rounded-[24px] overflow-x-auto border border-white/[0.04] text-[12px] leading-[1.65] font-mono text-neutral-300 m-0 shadow-inner whitespace-pre-wrap">
+                  {data}
+              </div>
+          );
+      }
+      return null;
+  }
 
   const togglePin = (idx: number) => {
     setPinned(prev => ({ ...prev, [idx]: !prev[idx] }));

@@ -277,3 +277,56 @@ export function resolveTeamAbbreviation(inputNameOrAbbr: string, options: Resolu
 
     return finalResult;
 }
+
+export function resolveLeagueFromTeamName(input: string): string | null {
+    if (!input) return null;
+    const l = input.toLowerCase();
+    
+    // NBA
+    const nbaKeywords = [
+        'lakers', 'knicks', 'thunder', 'warriors', 'celtics', 'heat', 'bucks', 'bulls', '76ers', 'sixers', 
+        'nets', 'clippers', 'suns', 'mavericks', 'mavs', 'nuggets', 'hawks', 'hornets', 'cavaliers', 'cavs', 
+        'pistons', 'pacers', 'magic', 'raptors', 'wizards', 'rockets', 'grizzlies', 'grizz', 'timberwolves', 
+        'wolves', 'twolves', 'pelicans', 'pels', 'spurs', 'kings', 'blazers', 'trail blazers', 'jazz', 'lal', 
+        'nyk', 'okc', 'gsw', 'bos', 'mia', 'mil', 'chi', 'phi', 'bkn', 'lac', 'phx', 'dal', 'den', 'atl', 'cha', 
+        'cle', 'det', 'ind', 'orl', 'tor', 'was', 'hou', 'mem', 'min', 'nop', 'sas', 'sac', 'por', 'uta'
+    ];
+    // MLB
+    const mlbKeywords = [
+        'yankees', 'yanks', 'nyy', 'red sox', 'redsox', 'dodgers', 'lad', 'giants', 'mets', 'nym', 'cubs', 'chc', 
+        'braves', 'astros', 'stros', 'white sox', 'whitesox', 'cws', 'guardians', 'indians', 'tigers', 'royals', 
+        'twins', 'orioles', 'os', 'rays', 'blue jays', 'bluejays', 'athletics', 'seattle', 'mariners', 'rangers', 
+        'diamondbacks', 'dbacks', 'rockies', 'padres', 'reds', 'brewers', 'pirates', 'cardinals', 'nationals', 
+        'nats', 'phillies', 'marlins', 'sfg', 'sf', 'chw', 'kcr', 'kc', 'bal', 'tbr', 'tb', 'oak', 'laa', 'angels', 
+        'sea', 'tex', 'ari', 'col', 'sdp', 'sd', 'cin', 'pit', 'stl', 'wsh', 'phils'
+    ];
+    // NFL
+    const nflKeywords = [
+        'chiefs', '49ers', 'niners', 'cowboys', 'eagles', 'bills', 'ravens', 'lions', 'packers', 'texans', 
+        'dolphins', 'browns', 'buccaneers', 'bucs', 'steelers', 'rams', 'seahawks', 'jaguars', 'jags', 'saints', 
+        'colts', 'raiders', 'broncos', 'chargers', 'patriots', 'pats', 'cardinals', 'giants', 'bears', 'titans', 
+        'panthers', 'falcons', 'commanders', 'vikings', 'jets'
+    ];
+    // NHL
+    const nhlKeywords = [
+        'oilers', 'panthers', 'stars', 'rangers', 'hurricanes', 'canucks', 'bruins', 'avalanche', 'avs', 'knights', 
+        'golden knights', 'lightning', 'bolts', 'maple leafs', 'leafs', 'kings', 'islanders', 'capitals', 'caps', 
+        'predators', 'preds', 'jets', 'flyers', 'wild', 'devils', 'red wings', 'wings', 'sabres', 'senators', 
+        'sens', 'coyotes', 'canadiens', 'habs', 'blues', 'kraken', 'flames', 'ducks', 'blackhawks', 'hawks', 
+        'sharks'
+    ];
+
+    for (const kw of nbaKeywords) {
+        if (l.includes(kw)) return 'nba';
+    }
+    for (const kw of mlbKeywords) {
+        if (l.includes(kw)) return 'mlb';
+    }
+    for (const kw of nflKeywords) {
+        if (l.includes(kw)) return 'nfl';
+    }
+    for (const kw of nhlKeywords) {
+        if (l.includes(kw)) return 'nhl';
+    }
+    return null;
+}

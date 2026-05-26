@@ -25,9 +25,9 @@ Run these before deployment:
 
 ```bash
 npm install
+npm run build
 npm run lint
 npm run typecheck
-npm run build
 ```
 
 ## Deployment Target
@@ -39,19 +39,8 @@ This repository is set up for a Node.js server runtime and is best deployed to C
 - `GEMINI_API_KEY` (required)
 - `PUBLIC_DOMAIN` (required for strict OIDC audience validation; set to your Cloud Run/custom domain)
 - `CRON_SECRET` (required only if you enable emergency fallback auth for cron endpoint)
-- `AURA_ADMIN_SECRET` (required for privileged `/api/mcp/*` endpoints; use bearer auth)
-- `ALLOW_MCP_DEPLOY` (default `false`; must be set to `true` to enable `/api/mcp/deploy`)
-- `ALLOW_KALSHI_TRADING` (default `false`; blocks order/trade actions unless explicitly enabled)
-- `KALSHI_API_KEY_ID` (optional; required for authenticated Kalshi portfolio/order APIs)
-- `KALSHI_PRIVATE_KEY` (optional; required for authenticated Kalshi portfolio/order APIs)
 - `INDEXNOW_KEY` (optional)
 - `GOOGLE_APPLICATION_CREDENTIALS` (optional, only used for the MCP deploy-helper path in `src/server/mcp-generator.ts`)
-
-### Sensitive Endpoint Controls
-
-- `/api/mcp/deploy` requires `Authorization: Bearer <AURA_ADMIN_SECRET>` and returns `{"error":"MCP deploy disabled"}` unless `ALLOW_MCP_DEPLOY=true`.
-- `/api/mcp/kalshi/execute` requires `Authorization: Bearer <AURA_ADMIN_SECRET>`.
-- Trading-style Kalshi actions (order/trade/buy/sell/cancel/portfolio orders) are blocked unless `ALLOW_KALSHI_TRADING=true`.
 
 ### Cron Endpoint Authentication
 

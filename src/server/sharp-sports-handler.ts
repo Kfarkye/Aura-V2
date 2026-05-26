@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { getDocs, query, collection, where, Firestore } from 'firebase/firestore';
 import { AuraArtifact } from '../types/aura';
 import { isDbDisabled, reportDbError } from './db-breaker';
-import { resolveTeamAbbreviation } from './entity-resolution';
+import { resolveTeamAbbreviation, resolveLeagueFromTeamName } from './entity-resolution';
 import { normalizeDraftKingsOdds, normalizeKalshiOdds } from './normalizers';
 
 const LOG_PREFIX = '[AURA:SPORTS:ORCHESTRATOR]';
@@ -37,18 +37,16 @@ const LEAGUE_SPORT_MAP: Record<string, string> = {
  * Prevents third-party API outages from hanging the Node Event Loop.
  */
 async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response | null> {
-    const controller = new AbortController();
-    const id = setTimeout(() => controller.abort(), timeoutMs);
+    const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Fetch timed out')), timeoutMs)
+    );
     try {
-        const response = await fetch(url, { signal: controller.signal });
+        const fetchPromise = fetch(url);
+        const response = await Promise.race([fetchPromise, timeoutPromise]) as Response;
         return response.ok ? response : null;
     } catch (error: any) {
-        if (error.name !== 'AbortError') {
-            console.warn(`${LOG_PREFIX} Fetch fault for ${url.split('?')[0]}:`, error.message);
-        }
+        console.warn(`${LOG_PREFIX} Fetch fault for ${url.split('?')[0]}:`, error.message);
         return null;
-    } finally {
-        clearTimeout(id);
     }
 }
 
@@ -178,15 +176,16 @@ export async function handleSportsQuery(rawParams: any, db?: Firestore | any): P
         };
     }
 
-    const { team, league, date } = validation.data;
+    let { team, league, date } = validation.data;
 
+    // Auto-resolve league from team if team is provided but league is missing
+    if (!league && team) {
+        league = resolveLeagueFromTeamName(team) || undefined;
+    }
+
+    // Default to 'mlb' if league cannot be resolved at all for the schedule
     if (!league) {
-        return {
-            id: `err_league_${Date.now()}`,
-            type: 'SPORTS_ARTIFACT',
-            resolution_state: 'GROUNDING_FAULT',
-            context_summary: "League scope required. Please specify the league (e.g., NBA, NFL)."
-        };
+        league = 'mlb';
     }
 
     const safeLeague = league.toLowerCase();
@@ -266,7 +265,7 @@ export async function handleSportsQuery(rawParams: any, db?: Firestore | any): P
     try {
         const scoreboardUrl = `https://site.api.espn.com/apis/site/v2/sports/${sport}/${safeLeague}/scoreboard${date ? `?dates=${date}` : ''}`;
         const standingsUrl = `https://site.api.espn.com/apis/v2/sports/${sport}/${safeLeague}/standings`;
-        const kalshiUrl = 'https://api.elections.kalshi.com/trade-api/v2/markets?limit=150';
+        const kalshiUrl = 'https://api.elections.kalshi.com/trade-api/v2/markets?limit=150&mve_filter=exclude';
 
         // Parallel Bounded Network Execution
         const [sbRes, stRes, kRes] = await Promise.all([

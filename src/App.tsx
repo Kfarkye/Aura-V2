@@ -1,9 +1,15 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { BrowserRouter, Routes, Route, Link, useParams, useLocation } from 'react-router-dom';
-import { Search, Send, ShieldCheck, Calendar as CalendarIcon, CloudFog, AlertCircle, Link as LinkIcon, ArrowLeft, Activity, Camera, X } from 'lucide-react';
+import React, { useState, useRef, useEffect, useCallback, useMemo, useLayoutEffect } from 'react';
+import { BrowserRouter, Routes, Route, Link, useParams, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { 
+    CloudFog, AlertCircle, ArrowLeft, Activity, Copy, Check, ExternalLink, Sparkles, Globe,
+    Search, Send, ShieldCheck, Calendar as CalendarIcon, Camera, X, TrendingUp, Zap, Link as LinkIcon, ChevronRight,
+    Bot, Filter, MessageSquare, PlusCircle, BookOpen, FileText, FileSpreadsheet, Lock, Clock, User as UserIcon // Renamed User to UserIcon to avoid conflict
+} from 'lucide-react'; 
 import Markdown, { Components } from 'react-markdown';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import remarkGfm from 'remark-gfm';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, useScroll, useSpring, useTransform } from 'framer-motion';
 
 // Core Services & Types
 import { AuraArtifact, AuraChatMessage, AuraHistoryMessage } from './types/aura';
@@ -23,133 +29,184 @@ import { SEO } from './components/SEO';
 import { WorkspaceOrchestrationBlueprint } from './components/WorkspaceOrchestrationBlueprint';
 import { EmailMimeViewer } from './components/EmailMimeViewer';
 import { KalshiMcpBlueprint } from './components/KalshiMcpBlueprint';
+import { WorkspaceMutationCard } from './components/WorkspaceMutationCard';
+import { DriveDocumentViewer, DriveDocumentData } from './components/DriveDocumentViewer'; 
+import { LiveQuantTerminal } from './components/LiveQuantTerminal';
+import { ScrollToTop } from './components/ScrollToTop';
+import { Navigation } from './components/Navigation';
+import { MessageCopyButton } from './components/MessageCopyButton';
 
 // ============================================================================
 // Core Interfaces
 // ============================================================================
 export interface FeedCard {
-    id: string;
-    slug?: string;
-    type: string;
-    priority: string;
-    category?: string;
-    headline: string;
-    summary: string;
-    image_url?: string;
-    source?: string;
-    publishedAt: number | string;
-    metadata?: Record<string, any>;
-    editorial_copy?: string;
-    ai_analysis?: string;
-    betting_angle?: string;
+    id: string; slug?: string; type: 'EDITORIAL' | 'PREDICTION_MARKET' | 'EXTERNAL_NEWS'; 
+    priority: string; category?: string;
+    headline: string; summary: string; image_url?: string; source?: string; source_url?: string;
+    publishedAt: number | string; metadata?: Record<string, any>;
+    editorial_copy?: string; ai_analysis?: string; betting_angle?: string;
     factual_claims?: { claim: string; source_entity: string }[];
+    live_game_id?: string;
 }
 
-const SPRING_TRANSITION = { type: "spring" as const, stiffness: 500, damping: 32 };
+export type SubdomainTab = 'sports' | 'workspace' | 'kalshi';
 
-// ============================================================================
-// Utilities
-// ============================================================================
+const SPRING_TRANSITION = { type: "spring" as const, stiffness: 400, damping: 30 };
+const EASE_TRANSITION: [number, number, number, number] = [0.16, 1, 0.3, 1];
+const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024; // 5MB limit for image uploads
+
 const generateId = (prefix: string) => `${prefix}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
-// Institutional Image Loader (Hardware Accelerated Volumetric Shimmer)
-const SafeImage = React.memo(({ src, alt, containerClassName, imageClassName }: { src: string; alt: string; containerClassName?: string; imageClassName?: string }) => {
+const SUGGESTED_PROMPTS: Record<SubdomainTab, string[]> = {
+    sports: ["Show Live Telemetry Matrix", "Analyze Player Prop Value", "Generate Win Probabilities"],
+    workspace: ["Summarize my unread inbox", "Find dispute documents", "Cross-reference my schedule"],
+    kalshi: ["Evaluate Live Derivatives", "Execute Limit Order", "Analyze Sharp Market Splits"]
+};
+
+// ============================================================================
+// Source Theming Utilities (Dynamic Brand Mapping)
+// ============================================================================
+const getSourceBrandStyling = (source?: string) => {
+    const s = (source || '').toLowerCase();
+    if (s.includes('espn')) return { bg: 'bg-[#CC0000]', text: 'text-[#CC0000]', border: 'border-[#CC0000]/20', glow: 'group-hover:from-[#CC0000]/15', hoverBorder: 'group-hover:border-[#CC0000]/50' };
+    if (s.includes('yahoo')) return { bg: 'bg-[#7B0099]', text: 'text-[#B040E0]', border: 'border-[#7B0099]/20', glow: 'group-hover:from-[#7B0099]/20', hoverBorder: 'group-hover:border-[#7B0099]/50' };
+    if (s.includes('aura')) return { bg: 'bg-[#4285F4]', text: 'text-[#4285F4]', border: 'border-[#4285F4]/20', glow: 'group-hover:from-[#4285F4]/15', hoverBorder: 'group-hover:border-[#4285F4]/50' };
+    return { bg: 'bg-white', text: 'text-white', border: 'border-white/[0.08]', glow: 'group-hover:from-white/10', hoverBorder: 'group-hover:border-white/20' };
+};
+
+// ============================================================================
+// Institutional Image Loader (Vignette & Grayscale Scoping)
+// ============================================================================
+const SafeImage = React.memo(({ src, alt, containerClassName, imageClassName, priority = false, kenBurns = false }: { src: string; alt: string; containerClassName?: string; imageClassName?: string; priority?: boolean; kenBurns?: boolean; }) => {
     const [status, setStatus] = useState<'loading' | 'loaded' | 'error'>('loading');
 
     if (status === 'error' || !src) {
-        return <div className={`bg-white/[0.02] flex items-center justify-center ${containerClassName || ''}`} aria-hidden="true" />;
+        return (
+            <div className={`bg-neutral-900 flex flex-col items-center justify-center border border-white/[0.04] ${containerClassName || ''}`} aria-hidden="true">
+                <CloudFog className="w-5 h-5 text-neutral-800 mb-1.5" />
+                <span className="text-[9px] font-mono uppercase tracking-widest text-neutral-600 font-bold">Asset Offline</span>
+            </div>
+        );
     }
 
     return (
-        <div className={`relative overflow-hidden bg-[#0A0A0C] border border-white/[0.02] ${containerClassName || ''}`}>
+        <div className={`relative overflow-hidden bg-neutral-950 border border-white/[0.04] ${containerClassName || ''}`} aria-busy={status === 'loading'}>
             {status === 'loading' && (
-                <div className="absolute inset-0 bg-[#0E0E12] overflow-hidden pointer-events-none z-10" aria-hidden="true">
+                <div className="absolute inset-0 bg-neutral-900 overflow-hidden pointer-events-none z-10" aria-hidden="true">
                     <motion.div 
-                        className="absolute inset-0 w-[200%] h-full bg-gradient-to-r from-transparent via-white/[0.04] to-transparent -skew-x-12"
+                        className="absolute inset-0 w-[200%] h-full bg-gradient-to-r from-transparent via-white/[0.03] to-transparent -skew-x-12"
                         animate={{ x: ['-100%', '100%'] }}
                         transition={{ repeat: Infinity, duration: 1.5, ease: 'linear' }}
                     />
                 </div>
             )}
-            <img 
+            <motion.img 
                 src={src} 
-                alt={alt}
+                alt={alt} 
                 referrerPolicy="no-referrer"
-                className={`w-full h-full object-cover transform-gpu will-change-[transform,opacity] transition-all duration-1000 ease-[0.16,1,0.3,1] ${status === 'loaded' ? 'opacity-100 scale-100 grayscale-0' : 'opacity-0 scale-[1.03] grayscale-[0.5]'} ${imageClassName || ''}`}
-                onLoad={() => setStatus('loaded')}
+                animate={kenBurns && status === 'loaded' ? { scale: [1, 1.05] } : {}}
+                transition={kenBurns ? { duration: 25, repeat: Infinity, repeatType: "reverse", ease: "linear" } : {}}
+                className={`w-full h-full object-cover transform-gpu will-change-[transform,opacity] transition-all duration-1000 ease-[0.16,1,0.3,1] ${status === 'loaded' ? 'opacity-100 scale-100' : 'opacity-0 scale-[1.03]'} ${imageClassName || ''}`}
+                onLoad={() => setStatus('loaded')} 
                 onError={() => setStatus('error')}
-                loading="lazy"
+                loading={priority ? "eager" : "lazy"} 
                 decoding="async"
             />
+            {/* Ambient Vignette Mask for Text Readability */}
+            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_30%,rgba(0,0,0,0.6)_100%)] pointer-events-none mix-blend-multiply opacity-60 z-[5]" />
         </div>
     );
 });
 SafeImage.displayName = 'SafeImage';
 
-function useFeedData() {
-    const [feed, setFeed] = useState<FeedCard[]>([]);
-    const [loading, setLoading] = useState(true);
+// ============================================================================
+// Institutional Payload Mock (for local dev, will be replaced by API)
+// ============================================================================
+const SOTA_FEED_MOCKS: FeedCard[] = [
+    {
+        id: "mlb_sd_phi_live",
+        slug: "live-sd-phi-volatility-matrix",
+        type: "EDITORIAL",
+        priority: "high_live",
+        category: "Live Matrix",
+        headline: "Padres vs Phillies: Live Quantitative Analysis",
+        summary: "The retail market is heavily backing the Phillies live moneyline after a 1st inning home run. Our models detect massive positive regression incoming for the Padres based on live pitch tracking and bullpen fatigue.",
+        image_url: "https://a.espncdn.com/photo/2024/0526/r1338275_1296x729_16-9.jpg", 
+        source: "Aura Quant Node",
+        publishedAt: new Date().toISOString(),
+        live_game_id: "mlb_sd_phi",
+        editorial_copy: `We are currently live at Petco Park in the bottom of the 5th inning, tracking extreme volatility metrics across the market.`
+    },
+    {
+        id: "espn_curated_ant_edwards",
+        slug: "espn-anthony-edwards-post-season-closer",
+        type: "EXTERNAL_NEWS",
+        priority: "standard",
+        category: "Executive Summary",
+        headline: "Anthony Edwards' Evolution into a Post-Season Closer",
+        summary: "ESPN breaks down the mechanical and mental shifts allowing Anthony Edwards to dominate the Western Conference Finals in clutch-time scenarios.",
+        image_url: "https://a.espncdn.com/photo/2024/0505/r1328646_1296x729_16-9.jpg", 
+        source: "ESPN",
+        source_url: "https://www.espn.com/nba",
+        publishedAt: new Date(Date.now() - 3600000 * 2).toISOString(),
+        editorial_copy: `
+## Aura Executive Summary
 
-    useEffect(() => {
-        const controller = new AbortController();
-        const fetchFeed = async () => {
-            try {
-                const response = await fetch('/api/feed', { signal: controller.signal });
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                
-                const contentType = response.headers.get("content-type");
-                if (!contentType || !contentType.includes("application/json")) {
-                    throw new TypeError("Received non-JSON response from API.");
-                }
-                
-                const data = await response.json();
-                setFeed(data.cards || []);
-            } catch (e: any) {
-                if (e.name !== 'AbortError') console.error("[AURA:UI:NETWORK] Context sync failure:", e.message);
-            } finally {
-                setLoading(false);
-            }
-        };
+The following is an AI-synthesized brief of an original feature published by **ESPN**. 
 
-        fetchFeed();
-        return () => controller.abort();
-    }, []);
+In the piece, analysts break down the specific mechanical adjustments Anthony Edwards has made to his pick-and-roll cadence during the 2026 Western Conference Finals. By slowing his initial burst off the screen, Edwards has neutralized traditional drop coverages that plagued him earlier in his career.
 
-    return { feed, loading };
-}
+### Key Analytical Takeaways
 
-function ScrollToTop() {
-    const { pathname } = useLocation();
-    useEffect(() => { window.scrollTo(0, 0); }, [pathname]);
-    return null;
-}
+* **Deceleration Metrics:** Edwards has increased his deceleration rate in the painted area by 14%, allowing him to draw fouls at a 32% higher clip in the fourth quarter.
+* **Clutch-Time Isolation:** When the game is within 5 points in the final 5 minutes, Minnesota's offensive rating spikes to 124.5 when Edwards isolates on the left wing.
+
+> "Edwards isn't just reacting to the defense anymore; he's manipulating the secondary rim protector with his eyes before he even crosses the three-point line. It's the hallmark of a veteran closer trapped in a 24-year-old's body." — ESPN Analysis
+        `,
+        factual_claims: [
+            { claim: "Minnesota's clutch offensive rating is 124.5 in left-wing isolations", source_entity: "ESPN Stats & Info" },
+            { claim: "Foul draw rate increased by 32% in 4th quarters", source_entity: "ESPN Feature Analysis" }
+        ]
+    },
+    {
+        id: "kalshi_ucl_final_madrid_bayern",
+        slug: "ucl-final-real-madrid-bayern-munich-derivatives",
+        type: "PREDICTION_MARKET",
+        priority: "standard",
+        category: "Derivatives",
+        headline: "UCL Final: Pricing the Real Madrid 'Black Magic' Variance",
+        summary: "Bayern Munich holds the structural xG advantage, but prediction markets are heavily discounting Real Madrid's late-game variance in the Champions League Final.",
+        image_url: "https://a.espncdn.com/photo/2024/0417/r1320340_1296x729_16-9.jpg", 
+        source: "Aura Quantitative Node",
+        publishedAt: new Date(Date.now() - 14400000).toISOString(),
+        metadata: {
+            kalshi_market_injected: true,
+            kalshi_title: "Real Madrid to Win the Trophy & Both Teams to Score",
+            kalshi_yes_price: 38,
+            kalshi_american_odds: "+163"
+        }
+    }
+];
 
 // ============================================================================
-// Static Markdown Configuration
+// Markdown Components (Institutional Chat Rendering)
 // ============================================================================
 const CHAT_REMARK_PLUGINS = [remarkGfm];
 
 const CHAT_MARKDOWN_COMPONENTS: Components = {
-    p: ({node, ...props}) => <p className="mb-5 last:mb-0 text-white/80 leading-[1.65] font-normal tracking-[-0.01em]" {...props} />,
-    h1: ({node, ...props}) => <h1 className="text-[20px] font-medium tracking-tight text-white/95 mt-8 mb-5" {...props} />,
-    h2: ({node, ...props}) => <h2 className="text-[17px] font-medium tracking-tight text-white/90 mt-6 mb-4" {...props} />,
-    h3: ({node, ...props}) => <h3 className="text-[12px] font-bold tracking-widest uppercase text-neutral-500 mt-6 mb-3 select-none" {...props} />,
-    ul: ({node, ...props}) => <ul className="list-none space-y-3 mt-3 mb-6 text-neutral-400" {...props} />,
-    ol: ({node, ...props}) => <ol className="list-decimal pl-5 mt-3 mb-6 space-y-3 text-neutral-400 tabular-nums lining-nums marker:text-neutral-600 font-mono" {...props} />,
-    li: ({node, ...props}) => <li className="relative pl-5 before:absolute before:left-0 before:top-[0.6em] before:w-2 before:h-px before:bg-neutral-600" {...props} />,
-    strong: ({node, ...props}) => <strong className="font-medium text-white/95" {...props} />,
-    a: ({node, ...props}) => (
-        <a 
-            className="text-neutral-300 hover:text-white underline underline-offset-4 decoration-white/20 hover:decoration-white/50 transition-colors duration-300 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/20 rounded-[2px]" 
-            target="_blank" 
-            rel="noopener noreferrer" 
-            {...props} 
-        />
-    ),
-    table: ({node, ...props}) => <div className="w-full overflow-x-auto my-8 rounded-[16px] border border-white/[0.04] bg-[#050505] shadow-inner"><table className="w-full text-left border-collapse text-[13px] tabular-nums lining-nums font-mono" {...props} /></div>,
-    thead: ({node, ...props}) => <thead className="bg-[#0A0A0A] border-b border-white/[0.04]" {...props} />,
-    th: ({node, ...props}) => <th className="px-5 py-3.5 font-medium text-neutral-500 uppercase tracking-widest text-[10px] whitespace-nowrap select-none" {...props} />,
-    td: ({node, ...props}) => <td className="px-5 py-3.5 border-b border-white/[0.02] text-white/80 align-top leading-relaxed" {...props} />,
+    p: ({node, ...props}) => <p className="mb-5 last:mb-0 text-[#D4D4D4] leading-[1.75] text-[15px] font-serif antialiased tracking-[-0.01em]" {...props} />,
+    h1: ({node, ...props}) => <h1 className="text-[20px] font-medium tracking-tight text-white/95 mt-6 mb-4 font-sans" {...props} />,
+    h2: ({node, ...props}) => <h2 className="text-[18px] font-medium tracking-tight text-white/95 mt-6 mb-3 font-sans" {...props} />,
+    h3: ({node, ...props}) => <h3 className="text-[11px] font-mono font-bold tracking-widest uppercase text-[#4285F4] mt-5 mb-2 select-none" {...props} />,
+    ul: ({node, ...props}) => <ul className="list-none space-y-2 mt-3 mb-5 text-[#D4D4D4] font-serif text-[15px] pl-1" {...props} />,
+    ol: ({node, ...props}) => <ol className="list-decimal pl-5 mt-3 mb-5 space-y-2 text-[#D4D4D4] marker:text-neutral-500 tabular-nums font-serif text-[15px]" {...props} />,
+    li: ({node, ...props}) => <li className="relative pl-6 before:absolute before:left-0 before:top-[0.6em] before:w-[4px] before:h-[1px] before:bg-[#4285F4] leading-[1.75]" {...props} />,
+    strong: ({node, ...props}) => <strong className="font-semibold text-white/95" {...props} />,
+    a: ({node, ...props}) => <a className="text-[#4285F4] hover:text-[#5b96f5] underline underline-offset-4 decoration-[#4285F4]/30 hover:decoration-[#4285F4]/60 transition-colors" target="_blank" rel="noopener noreferrer" {...props} />,
+    table: ({node, ...props}) => <div className="w-full overflow-x-auto my-6 rounded-[12px] border border-white/[0.04] bg-[#050505] shadow-inner"><table className="w-full text-left border-collapse text-[12px] tabular-nums font-mono" {...props} /></div>,
+    thead: ({node, ...props}) => <thead className="bg-[#0A0A0C] border-b border-white/[0.04]" {...props} />,
+    th: ({node, ...props}) => <th className="px-4 py-3 font-bold text-neutral-500 uppercase tracking-widest text-[9px] whitespace-nowrap" {...props} />,
+    td: ({node, ...props}) => <td className="px-4 py-3 border-b border-white/[0.02] text-neutral-300" {...props} />,
     code: ({node, className, children, ...props}: any) => {
         const match = /language-(\w+)/.exec(className || '');
         const lang = match?.[1];
@@ -159,318 +216,286 @@ const CHAT_MARKDOWN_COMPONENTS: Components = {
         if (lang === 'bettingangles') return <BettingAnglesCarousel data={content} />;
         if (lang === 'editorial') return <EditorialCarousel data={content} />;
         
-        return <code className={`text-neutral-300 bg-white/[0.04] px-1.5 py-0.5 rounded-[6px] text-[12px] font-mono border border-white/[0.08] shadow-sm ${className || ''}`} {...props}>{children}</code>;
+        const isInline = !match && !content.includes('\n');
+        if (!isInline && match) {
+            return (
+                <div className="relative group my-5">
+                    <div className="absolute top-0 right-0 bg-[#0A0A0C] z-10 px-3 py-1 text-[9px] text-neutral-500 font-mono uppercase tracking-widest font-bold border-b border-l border-white/[0.04] rounded-bl-[8px] rounded-tr-[12px]">{lang}</div>
+                    <SyntaxHighlighter style={vscDarkPlus as any} language={lang} PreTag="div" customStyle={{ margin: 0, padding: '1.5rem', background: '#050505', fontSize: '12px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.04)' }} {...props}>
+                        {content}
+                    </SyntaxHighlighter>
+                </div>
+            );
+        }
+        return <code className="text-neutral-300 bg-white/[0.04] px-1.5 py-0.5 rounded-[4px] text-[13px] font-mono border border-white/[0.08]" {...props}>{children}</code>;
     },
     pre: ({node, children, ...props}: any) => {
-        const hasCustomComponent = node?.children?.some((child: any) => 
-            child.tagName === 'code' && 
-            child.properties?.className?.some((cls: string) => 
-                cls.includes('language-chart') || cls.includes('language-bettingangles') || cls.includes('language-editorial')
-            )
-        );
-        if (hasCustomComponent) return <div className="my-8 w-full">{children}</div>;
-        return <pre className="bg-[#050505] p-6 rounded-[24px] overflow-x-auto border border-white/[0.04] my-6 text-[12px] leading-[1.65] shadow-inner font-mono text-neutral-300 tabular-nums lining-nums [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" {...props}>{children}</pre>;
+        const hasCustomComponent = node?.children?.some((child: any) => child.tagName === 'code' && child.properties?.className?.some((cls: string) => cls.includes('language-chart') || cls.includes('language-bettingangles') || cls.includes('language-editorial')));
+        if (hasCustomComponent) return <div className="my-6 w-full">{children}</div>;
+        return <pre className="bg-[#050505] p-6 pt-10 rounded-[20px] overflow-x-auto border border-white/[0.06] text-[13px] leading-[1.65] shadow-inner font-mono text-neutral-300 m-0" {...props}>{children}</pre>;
     }
 };
 
-// ============================================================================
-// Layout Components
-// ============================================================================
-interface NavigationProps {
-  user: any;
-  loadingAuth: boolean;
-  onSignIn: () => void;
-  onSignOut: () => void;
-}
+const EDITORIAL_MARKDOWN_COMPONENTS: Components = {
+    ...CHAT_MARKDOWN_COMPONENTS,
+    p: ({node, ...props}) => <p className="mb-8 last:mb-0 text-[#E5E5E5] text-[19px] sm:text-[20px] font-serif leading-[1.85] tracking-[-0.01em] antialiased" {...props} />,
+    h2: ({node, ...props}) => <h2 className="text-[32px] sm:text-[36px] font-sans font-medium tracking-tight text-white/95 mt-16 mb-6 leading-[1.2]" {...props} />,
+    h3: ({node, ...props}) => <h3 className="text-[14px] font-mono font-bold tracking-widest uppercase text-[#4285F4] mt-12 mb-5 select-none m-0" {...props} />,
+    blockquote: ({node, ...props}) => <blockquote className="border-l-[4px] border-[#4285F4] pl-6 sm:pl-8 my-12 py-5 italic text-[24px] sm:text-[26px] font-serif text-neutral-400 leading-[1.45] tracking-tight bg-gradient-to-r from-[#4285F4]/10 to-transparent rounded-r-3xl shadow-sm" {...props} />,
+    ul: ({node, ...props}) => <ul className="list-none space-y-4 mt-6 mb-10 text-[#D4D4D4] font-serif text-[19px] sm:text-[20px]" {...props} />,
+    ol: ({node, ...props}) => <ol className="list-decimal pl-6 mt-6 mb-10 space-y-4 text-[#D4D4D4] font-serif text-[19px] sm:text-[20px] tabular-nums lining-nums marker:text-neutral-500 marker:font-sans" {...props} />,
+    li: ({node, ...props}) => <li className="relative pl-8 before:absolute before:left-0 before:top-[0.65em] before:w-[4px] before:h-[1px] before:bg-neutral-600 leading-[1.85]" {...props} />,
+    strong: ({node, ...props}) => <strong className="font-semibold text-white/95" {...props} />,
+    hr: ({node, ...props}) => <hr className="my-16 border-t border-white/[0.08]" {...props} />,
+};
 
-const Navigation = React.memo(({ user, loadingAuth, onSignIn, onSignOut }: NavigationProps) => (
-    <header className="px-5 sm:px-8 py-4 flex items-center justify-between bg-[#000000]/60 backdrop-blur-[40px] saturate-[180%] top-0 z-50 sticky border-b border-white/[0.04] select-none supports-[backdrop-filter]:bg-[#000000]/40 transform-gpu">
-        <Link 
-            to="/" 
-            className="flex flex-col items-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 rounded-lg px-2 py-1 transition-all duration-500 ease-[0.16,1,0.3,1] active:scale-[0.96] group"
-            aria-label="Aura Home"
-        >
-            <span className="text-[20px] font-bold tracking-[-0.04em] text-white/95 leading-none group-hover:text-white transition-colors">AURA</span>
-            <span className="text-[8.5px] font-mono tracking-[0.25em] text-neutral-500 uppercase mt-1 leading-none font-bold">Live Sports Hub</span>
-        </Link>
+// ============================================================================
+// O(1) Global Cache Memory Layer (Prevents Routing Amnesia)
+// ============================================================================
+let globalFeedCache: FeedCard[] | null = null;
+let feedFetchPromise: Promise<FeedCard[]> | null = null;
+
+export const fetchGlobalFeed = async (): Promise<FeedCard[]> => {
+    if (globalFeedCache) return globalFeedCache;
+    if (feedFetchPromise) return feedFetchPromise;
+    
+    feedFetchPromise = fetch('/api/feed')
+        .then(res => {
+            if (!res.ok) throw new Error("Network feed unavailable");
+            return res.json();
+        })
+        .then(data => {
+            const arr = Array.isArray(data.feed) ? data.feed : (Array.isArray(data) ? data : []);
+            globalFeedCache = arr;
+            return arr;
+        })
+        .catch(err => {
+            console.error("[AURA:NETWORK] Failed to hydrate institutional feed.", err);
+            return [];
+        });
         
-        <div className="flex items-center gap-4">
-            {loadingAuth ? (
-                <div className="h-9 w-24 rounded-full bg-white/[0.02] border border-white/[0.04] relative overflow-hidden flex items-center justify-center text-[10px] text-neutral-500 font-mono tracking-widest uppercase">
-                    <motion.div 
-                        className="absolute inset-0 w-[200%] h-full bg-gradient-to-r from-transparent via-white/[0.04] to-transparent -skew-x-12"
-                        animate={{ x: ['-100%', '100%'] }}
-                        transition={{ repeat: Infinity, duration: 1.5, ease: 'linear' }}
-                    />
-                    Syncing
-                </div>
-            ) : user ? (
-                <div className="flex items-center gap-3 bg-white/[0.015] border border-white/[0.04] pl-2.5 pr-4 py-1.5 rounded-full hover:bg-white/[0.04] hover:border-white/[0.08] transition-all duration-300 ease-[0.16,1,0.3,1] backdrop-blur-md shadow-sm">
-                    {user.photoURL ? (
-                        <img src={user.photoURL} alt={user.displayName || "User"} referrerPolicy="no-referrer" className="h-[24px] w-[24px] rounded-full object-cover border border-white/10 shrink-0" />
-                    ) : (
-                        <div className="h-[24px] w-[24px] rounded-full bg-gradient-to-tr from-neutral-800 to-neutral-700 border border-white/10 flex items-center justify-center text-[11px] font-bold text-white uppercase select-none shrink-0">
-                            {user.email?.charAt(0) || 'A'}
-                        </div>
-                    )}
-                    <div className="flex flex-col text-left justify-center">
-                        <span className="text-[11px] font-medium text-white/95 leading-none truncate max-w-[100px] pb-0.5" title={user.email}>
-                            {user.displayName || user.email?.split('@')[0]}
-                        </span>
-                        <button onClick={onSignOut} className="text-[9px] font-mono text-neutral-500 hover:text-[#FF3B30] text-left leading-none transition-colors uppercase tracking-widest outline-none cursor-pointer">
-                            Disconnect
-                        </button>
-                    </div>
-                </div>
-            ) : (
-                <button 
-                    onClick={onSignIn}
-                    className="h-9 px-5 rounded-full bg-white text-black font-semibold text-[11px] tracking-widest uppercase shadow-[0_2px_15px_rgba(255,255,255,0.1)] hover:bg-neutral-200 active:scale-[0.96] duration-500 ease-[0.16,1,0.3,1] transition-all cursor-pointer flex items-center gap-2 outline-none focus-visible:ring-2 focus-visible:ring-white/50"
-                >
-                    <svg className="w-3.5 h-3.5 fill-black" viewBox="0 0 48 48">
-                        <path fill="currentColor" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
-                        <path fill="currentColor" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
-                        <path fill="currentColor" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
-                        <path fill="currentColor" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
-                    </svg>
-                    Connect
-                </button>
-            )}
-        </div>
-    </header>
-));
-Navigation.displayName = 'Navigation';
+    return feedFetchPromise;
+};
 
 // ============================================================================
-// Feed Ecosystem
+// Production API Data Fetcher Hooks
+// ============================================================================
+const useFeedData = () => {
+    const [loading, setLoading] = useState(!globalFeedCache);
+    const [feed, setFeed] = useState<FeedCard[]>(globalFeedCache || []);
+    const [error, setError] = useState<string | null>(null);
+
+    const syncFeed = useCallback(async () => {
+        setLoading(true);
+        setError(null);
+        try {
+            const data = await fetchGlobalFeed();
+            setFeed(data);
+            if (data.length === 0) setError("No intelligence available from the node.");
+        } catch (e: any) {
+            setError(e.message || "Failed to sync.");
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (!globalFeedCache) syncFeed();
+    }, [syncFeed]);
+
+    return { feed, loading, error, refetch: syncFeed };
+};
+
+const useStoryData = (id?: string) => {
+    const [loading, setLoading] = useState(true);
+    const [story, setStory] = useState<FeedCard | null>(null);
+
+    useEffect(() => {
+        if (!id) return;
+        let isMounted = true;
+        
+        // Use global cache first for zero latency hydration
+        if (globalFeedCache) {
+            const found = globalFeedCache.find(c => c.id === id || c.slug === id);
+            if (found) {
+                setStory(found);
+                setLoading(false);
+                return;
+            }
+        }
+
+        // Fallback to fetch if deep linked directly
+        fetchGlobalFeed().then(data => {
+            if (isMounted) {
+                const found = data.find(c => c.id === id || c.slug === id);
+                setStory(found || null);
+                setLoading(false);
+            }
+        });
+
+        return () => { isMounted = false; };
+    }, [id]);
+
+    return { story, loading };
+};
+
+// ============================================================================
+// Feed Components
 // ============================================================================
 const FeedItem = React.memo(({ item }: { item: FeedCard }) => {
+    const navigate = useNavigate();
     const destinationUrl = `/story/${item.slug || item.id}`;
 
     const publishedDate = useMemo(() => {
         if (!item.publishedAt) return '';
         const d = new Date(item.publishedAt);
-        return isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        const diffHrs = Math.floor((Date.now() - d.getTime()) / 3600000);
+        if (diffHrs < 24) return `${diffHrs}h ago`;
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     }, [item.publishedAt]);
 
-    if (item.type === 'PREDICTION_MARKET') {
-        const headlineStr = typeof item.headline === 'string' ? item.headline : '';
-        const uniqueOptions = Array.from(new Set(headlineStr.split(',').map((w: string) => w.trim()).filter((w: string) => w.length > 0 && w.toLowerCase() !== 'yes' && w.toLowerCase() !== 'no')));
-        
-        return (
-            <Link 
-               to={destinationUrl}
-               aria-label={`Prediction Market: ${item.headline}`}
-               className="block w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20 rounded-[32px] outline-none mb-8 group"
-            >
-                <motion.div
-                   whileHover={{ y: -4, scale: 1.005 }}
-                   whileTap={{ scale: 0.98 }}
-                   transition={SPRING_TRANSITION}
-                   className="w-full relative bg-white/[0.015] backdrop-blur-3xl border border-white/[0.04] rounded-[32px] overflow-hidden hover:bg-white/[0.025] hover:border-white/[0.08] shadow-[0_8px_30px_rgba(0,0,0,0.12)] hover:shadow-[0_16px_50px_rgba(0,0,0,0.25)] p-7 sm:p-8 transition-colors duration-500 pointer-events-auto cursor-pointer transform-gpu"
-                >
-                    <div className="flex items-center justify-between mb-5 select-none">
-                        <div className="flex items-center gap-2">
-                            <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">Prediction Market</span>
-                            {item.priority === 'breaking' && (
-                                <div className="flex items-center gap-1.5 ml-2 bg-[#FF3B30]/10 px-2 py-0.5 rounded-[4px] border border-[#FF3B30]/20">
-                                    <span className="w-1.5 h-1.5 bg-[#FF3B30] rounded-full animate-pulse shadow-[0_0_8px_rgba(255,59,48,0.6)]" />
-                                    <span className="text-[9px] font-bold text-[#FF3B30] uppercase tracking-widest">Trending</span>
-                                </div>
-                            )}
-                        </div>
-                    </div>
+    const sourceStyling = getSourceBrandStyling(item.source);
+    const isExternalNews = item.type === 'EXTERNAL_NEWS';
+    const isPredictionMarket = item.type === 'PREDICTION_MARKET';
+    const isAuraEditorial = item.type === 'EDITORIAL';
 
-                    <h4 className="text-[20px] sm:text-[24px] font-medium text-white/95 leading-[1.3] mb-6 tracking-tight group-hover:text-white transition-colors duration-500">
-                        {item.headline}
-                    </h4>
-                    
-                    {uniqueOptions.length > 1 && (
-                        <div className="flex flex-wrap gap-2 mb-8 select-none">
-                            {uniqueOptions.slice(0, 4).map((word: string, i: number) => (
-                                <span key={i} className="text-[12px] font-medium text-neutral-400 bg-[#050505] px-3.5 py-1.5 rounded-[8px] border border-white/[0.04] shadow-sm">
-                                    {word}
-                                </span>
-                            ))}
-                        </div>
-                    )}
-
-                    <div className="flex items-center justify-between pt-6 mt-2 border-t border-white/[0.04] select-none">
-                        <div className="flex flex-col">
-                            <div className="text-[10px] text-neutral-500 font-medium uppercase tracking-widest mb-1.5">Implied Yes</div>
-                            <div className="text-[32px] font-medium text-white/95 tracking-tighter tabular-nums lining-nums leading-none">
-                                {item.metadata?.yes_price || 0}<span className="text-[18px] text-neutral-600 ml-0.5 font-normal">%</span>
-                            </div>
-                        </div>
-                        <span className="bg-white/[0.05] group-hover:bg-white/[0.1] text-white border border-white/[0.08] text-[12px] font-bold uppercase tracking-widest px-6 py-3 rounded-full transition-all duration-500 ease-[0.16,1,0.3,1] shadow-sm">
-                             View Order Book
-                        </span>
-                    </div>
-                </motion.div>
-            </Link>
-        );
-    }
+    const cardVariants = {
+        hover: { y: -4, scale: 1.005 },
+        tap: { scale: 0.98 }
+    };
 
     return (
-        <Link 
-           to={destinationUrl}
-           aria-label={`Story: ${item.headline}`}
-           className="block w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20 rounded-[32px] outline-none mb-8 group"
+        <motion.div
+           whileHover={{ y: -4, scale: 1.005 }}
+           whileTap={{ scale: 0.98 }}
+           transition={SPRING_TRANSITION}
+           className="relative block w-full mb-10 group"
         >
-            <motion.div
-               whileHover={{ y: -4, scale: 1.005 }}
-               whileTap={{ scale: 0.98 }}
-               transition={SPRING_TRANSITION}
-               className="w-full relative bg-white/[0.015] backdrop-blur-3xl border border-white/[0.04] rounded-[32px] overflow-hidden hover:bg-white/[0.025] hover:border-white/[0.08] shadow-[0_8px_30px_rgba(0,0,0,0.12)] hover:shadow-[0_16px_40px_rgba(0,0,0,0.2)] transition-colors duration-500 cursor-pointer transform-gpu"
-            >
+            <Link 
+                to={destinationUrl}
+                className="absolute inset-0 z-10 rounded-[32px] outline-none focus-visible:ring-2 focus-visible:ring-white/20"
+                aria-label={`Read full analysis: ${item.headline}`}
+            />
+            
+            <div className={`absolute inset-0 bg-gradient-to-r from-transparent via-transparent to-transparent ${isExternalNews ? sourceStyling.glow : 'group-hover:from-[#4285F4]/10'} rounded-[32px] blur-2xl transition-all duration-700 pointer-events-none -z-10 transform-gpu opacity-40`} />
+            
+            <div className={`w-full relative bg-[#050505] border border-white/[0.04] rounded-[32px] overflow-hidden shadow-[0_12px_40px_rgba(0,0,0,0.3)] transition-colors duration-500 transform-gpu group-hover:bg-[#0A0A0C] pointer-events-none ${isExternalNews ? sourceStyling.hoverBorder : 'group-hover:border-[#4285F4]/50'}`}>
+                
                 {item.image_url && (
-                    <div className="w-full aspect-[21/9] sm:aspect-[16/9] relative bg-[#050505] border-b border-white/[0.02] overflow-hidden">
+                    <div className="w-full aspect-[21/9] sm:aspect-[16/9] relative bg-[#0A0A0C] border-b border-white/[0.02] overflow-hidden pointer-events-none z-0">
                         <SafeImage 
                             src={item.image_url} 
                             alt={item.headline}
-                            containerClassName="absolute inset-0 z-0"
-                            imageClassName="opacity-80 group-hover:opacity-100 grayscale-[0.2] group-hover:grayscale-0 group-hover:scale-[1.03]"
+                            containerClassName="absolute inset-0 border-none"
+                            imageClassName={`opacity-80 group-hover:opacity-100 transition-all duration-700 scale-[1.01] group-hover:scale-[1.03] ${isAuraEditorial ? 'grayscale-[0.3] group-hover:grayscale-0' : 'grayscale-0'}`}
                         />
-                        <div className="absolute inset-0 bg-gradient-to-t from-[#000000] via-[#000000]/20 to-transparent opacity-90 z-10 pointer-events-none" />
+                        <div className="absolute inset-0 bg-gradient-to-t from-[#050505] via-[#050505]/30 to-transparent opacity-100" />
                     </div>
                 )}
 
-                <div className={`flex flex-col p-7 sm:p-8 ${item.image_url ? '-mt-16 relative z-20' : ''}`}>
-                   <div className="flex items-center gap-3 mb-5 select-none font-sans">
-                       <span className={`text-[10px] font-bold uppercase tracking-widest ${item.image_url ? 'text-white/95 bg-[#000]/60 backdrop-blur-md px-2.5 py-1.5 rounded-[6px] border border-white/10 shadow-sm' : 'text-neutral-500'}`}>
-                           {item.category || 'Intelligence'}
-                       </span>
-                       {item.priority === 'high_live' && (
-                           <span className="text-[10px] font-bold text-[#FF3B30] uppercase tracking-widest flex items-center gap-1.5 bg-[#FF3B30]/10 px-2.5 py-1.5 rounded-[6px] border border-[#FF3B30]/20">
-                               <span className="w-1.5 h-1.5 bg-[#FF3B30] rounded-full animate-pulse shadow-[0_0_8px_rgba(255,59,48,0.6)]" /> Live
+                <div className={`flex flex-col p-8 sm:p-10 relative z-20 pointer-events-none ${item.image_url ? '-mt-24' : ''}`}>
+                   <div className="flex items-center justify-between mb-6 select-none font-sans pointer-events-auto">
+                       <div className="flex items-center gap-3">
+                           <span className={`text-[10px] font-bold font-mono uppercase tracking-widest text-white/95 bg-[#000000]/80 backdrop-blur-md px-3 py-1.5 rounded-[8px] border border-white/[0.08] shadow-sm flex items-center gap-2`}>
+                               {isExternalNews ? <Globe className={`w-3.5 h-3.5 ${sourceStyling.text}`} /> : <Activity className="w-3.5 h-3.5 text-[#4285F4]" />}
+                               {item.category || 'Intelligence'}
                            </span>
+                           {item.priority === 'high_live' && (
+                               <span className="flex items-center gap-1.5 bg-[#FF3B30]/10 px-2.5 py-1.5 rounded-[6px] border border-[#FF3B30]/20">
+                                   <span className="w-1.5 h-1.5 bg-[#FF3B30] rounded-full animate-pulse shadow-[0_0_8px_rgba(255,59,48,0.8)]" />
+                                   <span className="text-[10px] font-bold text-[#FF3B30] uppercase tracking-widest font-mono">Live</span>
+                               </span>
+                           )}
+                       </div>
+                       
+                       {/* Deep Link to Live Terminal */}
+                       {item.live_game_id && (
+                           <div className="relative z-30 pointer-events-auto">
+                               <button 
+                                   onClick={(e) => { e.preventDefault(); e.stopPropagation(); navigate(`/live/${item.live_game_id}`); }}
+                                   className="hidden sm:flex items-center gap-2 bg-[#4285F4]/10 hover:bg-[#4285F4]/20 text-[#4285F4] border border-[#4285F4]/30 px-3 py-1.5 rounded-[8px] text-[10px] font-mono font-bold uppercase tracking-widest transition-colors shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-white/30 cursor-pointer"
+                               >
+                                   <TerminalSquare className="w-3.5 h-3.5" /> Launch Matrix
+                               </button>
+                           </div>
                        )}
                    </div>
                    
-                   <h4 className="text-[22px] sm:text-[26px] font-medium text-white/95 leading-[1.25] mb-3.5 tracking-tight group-hover:text-white transition-colors duration-500">
-                       {item.headline}
-                   </h4>
-                   <p className="text-[15px] text-neutral-400 leading-[1.65] line-clamp-3 mb-6 font-normal tracking-[-0.01em]">
-                       {item.summary}
-                   </p>
+                   <h4 className="text-[26px] sm:text-[32px] font-medium text-white/95 leading-[1.2] mb-4 tracking-tight group-hover:text-white transition-colors duration-500 drop-shadow-sm">{item.headline}</h4>
+                   <p className="text-[15px] sm:text-[17px] text-neutral-400 leading-[1.75] line-clamp-3 mb-8 font-serif tracking-[-0.01em]">{item.summary}</p>
 
-                   {/* Institutional Kalshi Injection */}
-                   {item.metadata?.kalshi_market_injected && (
-                       <div className="mt-2 mb-4 p-5 rounded-[20px] bg-white/[0.02] border border-white/[0.04] transition-colors relative overflow-hidden group-hover:bg-white/[0.035] font-sans">
-                            <div className="flex items-center gap-2 mb-4 relative z-10 select-none">
-                                <span className="text-neutral-400 text-[10px] font-bold uppercase tracking-widest inline-flex items-center gap-1.5 bg-white/[0.04] px-2 py-0.5 rounded-[4px] border border-white/[0.08]">
-                                    <Activity className="w-2.5 h-2.5 text-neutral-400" />
-                                    Live Market
+                   {/* Kalshi Injection Preview */}
+                   {isPredictionMarket && item.metadata?.kalshi_market_injected && (
+                       <div className="mt-2 mb-6 p-6 rounded-[24px] bg-[#0A0A0C] border border-white/[0.04] transition-colors relative overflow-hidden group-hover:bg-[#111113] font-sans shadow-inner pointer-events-auto">
+                            <div className="flex items-center gap-2 mb-5 relative z-10 select-none">
+                                <span className="text-[#34C759] text-[9px] font-bold font-mono uppercase tracking-widest inline-flex items-center gap-1.5 bg-[#34C759]/10 px-2.5 py-1 rounded-[6px] border border-[#34C759]/20">
+                                    <Activity className="w-3 h-3 text-[#34C759]" /> Live Market
                                 </span>
-                                <span className="text-white/10 mx-1">•</span>
-                                <span className="text-[10px] text-neutral-500 font-mono uppercase tracking-widest">Prediction</span>
+                                <span className="text-white/10 mx-1">•</span><span className="text-[10px] text-neutral-500 font-mono uppercase tracking-widest font-bold">Prediction Edge</span>
                             </div>
-                            
-                            <h4 className="text-[14px] font-medium text-white/90 leading-snug mb-5 tracking-tight pr-4 relative z-10 line-clamp-2">
-                                {item.metadata.kalshi_title || 'Related Market Prediction'}
-                            </h4>
-
-                            <div className="flex items-center justify-between gap-3 relative z-10 select-none">
-                                <div className="flex-1 bg-[#050505] group-hover:bg-[#0A0A0C] transition-colors duration-500 rounded-[12px] p-4 border border-white/[0.04] flex flex-col gap-1 cursor-pointer">
-                                    <div className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest transition-colors">Yes</div>
-                                    <div className="text-[18px] font-medium text-white/95 tabular-nums lining-nums leading-none mt-1.5">{item.metadata.kalshi_yes_price}%</div>
-                                    {item.metadata.kalshi_american_odds && (
-                                        <div className="text-[11px] font-mono text-neutral-500 mt-1.5 tabular-nums lining-nums truncate">{item.metadata.kalshi_american_odds}</div>
-                                    )}
+                            <h4 className="text-[15px] font-medium text-white/90 leading-snug mb-5 tracking-tight pr-4 relative z-10 line-clamp-2">{item.metadata.kalshi_title || 'Related Market Prediction'}</h4>
+                            <div className="flex items-center justify-between gap-4 relative z-10 select-none">
+                                <div className="flex-1 bg-[#050505] transition-colors duration-500 rounded-[16px] p-5 border border-white/[0.04] flex flex-col gap-1 shadow-sm relative overflow-hidden">
+                                    <div className="absolute inset-y-0 left-0 bg-[#34C759]/5 transition-all" style={{ width: `${item.metadata.kalshi_yes_price || 0}%` }} />
+                                    <div className="text-[10px] font-mono font-bold text-neutral-500 uppercase tracking-widest transition-colors relative z-10">Yes</div>
+                                    <div className="text-[22px] font-medium text-white/95 tabular-nums lining-nums leading-none mt-1.5 font-sans relative z-10">{item.metadata.kalshi_yes_price}%</div>
                                 </div>
-                                <div className="flex-1 bg-[#050505] group-hover:bg-[#0A0A0C] transition-colors duration-500 rounded-[12px] p-4 border border-white/[0.04] flex flex-col gap-1 cursor-pointer">
-                                    <div className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest transition-colors">No</div>
-                                    <div className="text-[18px] font-medium text-neutral-400 tabular-nums lining-nums leading-none mt-1.5">{100 - (item.metadata.kalshi_yes_price || 0)}%</div>
+                                <div className="flex-1 bg-[#050505] transition-colors duration-500 rounded-[16px] p-5 border border-white/[0.04] flex flex-col gap-1 shadow-sm">
+                                    <div className="text-[10px] font-mono font-bold text-neutral-500 uppercase tracking-widest transition-colors">No</div>
+                                    <div className="text-[22px] font-medium text-neutral-400 tabular-nums lining-nums leading-none mt-1.5 font-sans">{100 - (item.metadata.kalshi_yes_price || 0)}%</div>
                                 </div>
                             </div>
                        </div>
                    )}
-
-                   <div className="mt-4 flex items-center justify-between pt-5 border-t border-white/[0.04] font-sans">
-                       <div className="flex items-center gap-2 text-[10px] font-mono text-neutral-500 uppercase tracking-widest select-none tabular-nums lining-nums">
+                   <div className="mt-2 flex items-center justify-between pt-6 border-t border-white/[0.04] font-sans pointer-events-auto">
+                       <div className="flex items-center gap-2 text-[10px] font-mono font-bold text-neutral-500 uppercase tracking-widest select-none tabular-nums lining-nums">
                            <span>{item.source || 'Aura Protocol'}</span>
-                           {publishedDate && (
-                               <>
-                                   <span className="text-neutral-700">•</span>
-                                   <time dateTime={new Date(item.publishedAt).toISOString()}>{publishedDate}</time>
-                               </>
-                           )}
+                           {publishedDate && <><span className="text-neutral-700">•</span><time dateTime={new Date(item.publishedAt).toISOString()}>{publishedDate}</time></>}
                        </div>
                    </div>
                 </div>
+            </div>
             </motion.div>
-        </Link>
     );
 });
 FeedItem.displayName = 'FeedItem';
 
 function FeedSkeleton() {
     return (
-        <div className="w-full relative bg-white/[0.01] border border-white/[0.02] rounded-[32px] overflow-hidden mb-8 shadow-sm">
-            <div className="w-full aspect-[21/9] sm:aspect-[16/9] bg-[#0A0A0C] border-b border-white/[0.02] relative overflow-hidden">
-                <motion.div 
-                    className="absolute inset-0 w-[200%] h-full bg-gradient-to-r from-transparent via-white/[0.03] to-transparent -skew-x-12"
-                    animate={{ x: ['-100%', '100%'] }}
-                    transition={{ repeat: Infinity, duration: 1.5, ease: 'linear' }}
-                />
-            </div>
-            <div className="p-7 sm:p-8 -mt-16 relative z-10">
-                <div className="h-4 w-24 bg-white/[0.04] rounded-[4px] mb-6 relative overflow-hidden">
-                    <motion.div 
-                        className="absolute inset-0 w-[200%] h-full bg-gradient-to-r from-transparent via-white/[0.06] to-transparent -skew-x-12"
-                        animate={{ x: ['-100%', '100%'] }}
-                        transition={{ repeat: Infinity, duration: 1.5, ease: 'linear' }}
-                    />
-                </div>
-                <div className="h-6 w-3/4 bg-white/[0.04] rounded-[6px] mb-4 relative overflow-hidden">
-                    <motion.div 
-                        className="absolute inset-0 w-[200%] h-full bg-gradient-to-r from-transparent via-white/[0.06] to-transparent -skew-x-12"
-                        animate={{ x: ['-100%', '100%'] }}
-                        transition={{ repeat: Infinity, duration: 1.5, ease: 'linear' }}
-                    />
-                </div>
-                <div className="h-4 w-full bg-white/[0.03] rounded-[4px] mb-3 relative overflow-hidden">
-                    <motion.div 
-                        className="absolute inset-0 w-[200%] h-full bg-gradient-to-r from-transparent via-white/[0.06] to-transparent -skew-x-12"
-                        animate={{ x: ['-100%', '100%'] }}
-                        transition={{ repeat: Infinity, duration: 1.5, ease: 'linear' }}
-                    />
-                </div>
+        <div className="w-full relative bg-[#050505] border border-white/[0.04] rounded-[32px] overflow-hidden mb-10 shadow-sm animate-pulse">
+            <div className="w-full aspect-[21/9] sm:aspect-[16/9] bg-[#0A0A0C] border-b border-white/[0.02] relative overflow-hidden" />
+            <div className="p-8 sm:p-10 -mt-24 relative z-10">
+                <div className="h-4 w-32 bg-white/[0.04] rounded-[6px] mb-6 relative overflow-hidden" />
+                <div className="h-8 w-3/4 bg-white/[0.04] rounded-[8px] mb-4 relative overflow-hidden" />
+                <div className="h-6 w-full bg-white/[0.03] rounded-[6px] mb-3 relative overflow-hidden" />
             </div>
         </div>
     );
 }
 
 function HomeFeed() {
-  const { feed, loading } = useFeedData();
+  const { feed, loading, error, refetch } = useFeedData();
 
-  if (loading) {
-     return (
-       <div className="w-full max-w-2xl px-2 sm:px-4 flex flex-col mt-4" aria-busy="true" aria-label="Loading feed">
-        <FeedSkeleton />
-        <FeedSkeleton />
-       </div>
-     );
-  }
+  if (loading && feed.length === 0) return <div className="w-full max-w-[760px] px-2 sm:px-4 flex flex-col mt-8 mx-auto"><FeedSkeleton /><FeedSkeleton /></div>;
+  
+  if (error && feed.length === 0) return (
+      <div className="w-full max-w-[760px] mx-auto mt-8 px-4 sm:px-6">
+          <div className="bg-[#050505] border border-[#FF3B30]/30 rounded-[24px] p-8 text-center shadow-sm flex flex-col items-center">
+              <AlertCircle className="w-6 h-6 text-[#FF3B30] mb-3" />
+              <h3 className="text-[12px] font-mono font-bold tracking-widest text-[#FF3B30] uppercase mb-2">Telemetry Disconnected</h3>
+              <p className="text-[14px] text-neutral-400 font-sans mb-6">{error}</p>
+              <button onClick={refetch} className="px-6 py-2.5 bg-white/[0.04] hover:bg-white/[0.08] text-white text-[11px] font-mono uppercase tracking-widest font-bold rounded-[8px] transition-colors outline-none border border-white/[0.08] active:scale-95 focus-visible:ring-2 focus-visible:ring-white/20">Retry Connection</button>
+          </div>
+      </div>
+  );
 
-  if (feed.length === 0) {
-      return (
-         <div className="text-neutral-500 text-[11px] font-mono tracking-widest mt-12 text-center bg-white/[0.015] border border-white/[0.04] p-10 rounded-[32px] border-dashed select-none uppercase">
-             Intelligence feed synchronizing...
-         </div>
-      );
-  }
+  if (feed.length === 0) return <div className="text-neutral-500 text-[12px] font-mono tracking-widest mt-16 text-center bg-[#050505] border border-white/[0.04] p-12 rounded-[32px] border-dashed select-none uppercase shadow-inner max-w-[760px] mx-auto font-bold">Data feed synchronized. No active events.</div>;
 
   return (
-      <div className="w-full max-w-2xl flex flex-col mx-auto mt-4 px-2">
+      <div className="w-full max-w-[760px] flex flex-col mx-auto mt-4 px-4 sm:px-6">
          <AnimatePresence mode="popLayout">
              {feed.map((item, i) => (
-                 <motion.div
-                    key={item.id}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.5, delay: Math.min(i * 0.1, 0.4), ease: [0.16, 1, 0.3, 1] }}
-                 >
+                 <motion.div key={item.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: Math.min(i * 0.1, 0.4), ease: EASE_TRANSITION }}>
                      <FeedItem item={item} />
                  </motion.div>
              ))}
@@ -480,100 +505,93 @@ function HomeFeed() {
 }
 
 // ============================================================================
-// Core Chat Interface
+// Core Chat Interface (Production LLM Direct Routing)
 // ============================================================================
-interface ChatInterfaceProps {
-  user: any;
-  token: string | null;
-  onSignIn: () => void;
-  loadingAuth: boolean;
-}
-
-type SubdomainTab = 'sports' | 'workspace' | 'kalshi';
-
-function ChatInterface({ user, token, onSignIn, loadingAuth }: ChatInterfaceProps) {
+function ChatInterface({ 
+    user, token, onSignIn, loadingAuth, messages, setMessages 
+}: { 
+    user: any; token: string | null; onSignIn: () => void; loadingAuth: boolean;
+    messages: AuraChatMessage[]; setMessages: React.Dispatch<React.SetStateAction<AuraChatMessage[]>>;
+}) {
   const [prompt, setPrompt] = useState('');
   const [loading, setLoading] = useState(false);
-  const [messages, setMessages] = useState<AuraChatMessage[]>([]);
-  const [activeSubdomain, setActiveSubdomain] = useState<SubdomainTab>('sports');
   const endRef = useRef<HTMLDivElement>(null);
+  
+  // URL synced state
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeSubdomain = (searchParams.get('tab') as SubdomainTab) || 'sports';
+  const setActiveSubdomain = (tab: SubdomainTab) => { setSearchParams({ tab }); };
 
-  // Gemini 3.5 Vision integration states
+  // Attachment States
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [selectedMime, setSelectedMime] = useState<string | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [viewedDocument, setViewedDocument] = useState<DriveDocumentData | null>(null); 
 
   useEffect(() => {
-      const timer = setTimeout(() => {
-          endRef.current?.scrollIntoView({ behavior: 'smooth' });
-      }, 150);
+      const timer = setTimeout(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, 150);
       return () => clearTimeout(timer);
   }, [messages, loading]);
 
-  useEffect(() => {
-      return () => {
-          if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
-      };
-  }, [imagePreviewUrl]);
+  useEffect(() => { return () => { if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl); }; }, [imagePreviewUrl]);
 
   const processFile = (file: File) => {
-      if (!file.type.startsWith('image/')) {
-          alert('Please upload an image file (PNG, JPG, etc) representing a sports asset.');
-          return;
-      }
+      if (!file.type.startsWith('image/')) { alert('Please upload an image file (PNG, JPG, etc).'); return; }
+      if (file.size > MAX_IMAGE_SIZE_BYTES) { alert(`File exceeds maximum size of ${MAX_IMAGE_SIZE_BYTES / (1024*1024)}MB.`); return; }
       const reader = new FileReader();
       reader.onloadend = () => {
-          const base64String = (reader.result as string).split(',')[1];
-          setSelectedImage(base64String);
+          setSelectedImage((reader.result as string).split(',')[1]);
           setSelectedMime(file.type);
-          if (imagePreviewUrl) {
-              URL.revokeObjectURL(imagePreviewUrl);
-          }
+          if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
           setImagePreviewUrl(URL.createObjectURL(file));
       };
       reader.readAsDataURL(file);
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (file) {
-          processFile(file);
-      }
-  };
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => { if (e.target.files?.[0]) processFile(e.target.files[0]); };
+  const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); setIsDragging(true); };
+  const handleDragLeave = () => { setIsDragging(false); };
+  const handleDrop = (e: React.DragEvent) => { e.preventDefault(); setIsDragging(false); if (e.dataTransfer.files?.[0]) processFile(e.dataTransfer.files[0]); };
+  const clearAttachment = () => { setSelectedImage(null); setSelectedMime(null); if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl); setImagePreviewUrl(null); };
 
-  const handleDragOver = (e: React.DragEvent) => {
-      e.preventDefault();
-      setIsDragging(true);
-  };
-
-  const handleDragLeave = () => {
-      setIsDragging(false);
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-      e.preventDefault();
-      setIsDragging(false);
-      const file = e.dataTransfer.files?.[0];
-      if (file) {
-          processFile(file);
-      }
-  };
-
-  const clearAttachment = () => {
-      setSelectedImage(null);
-      setSelectedMime(null);
-      if (imagePreviewUrl) {
-          URL.revokeObjectURL(imagePreviewUrl);
-      }
-      setImagePreviewUrl(null);
-  };
-
-  const handleQuery = async (e?: React.FormEvent, presetPrompt?: string) => {
-    if (e) e.preventDefault();
-    const activePrompt = presetPrompt || prompt;
-    if ((!activePrompt.trim() && !selectedImage) || loading) return;
+  const handleQuery = async (eOrPreset?: React.FormEvent | string, contextData?: DriveDocumentData) => {
+    // Strictly prevent native HTML form routing/reloading
+    if (eOrPreset && typeof eOrPreset !== 'string' && 'preventDefault' in eOrPreset) {
+        eOrPreset.preventDefault();
+    }
     
+    const activePrompt = typeof eOrPreset === 'string' ? eOrPreset : prompt;
+    if ((!activePrompt.trim() && !selectedImage && !contextData) || loading) return;
+    
+    const userMessageImg = imagePreviewUrl || undefined;
+    const sendImg = selectedImage; const sendMime = selectedMime;
+
+    clearAttachment();
+    setMessages(prev => [...prev, { id: generateId('usr'), role: 'user', content: activePrompt || (contextData ? `Analyze document: ${contextData.name}` : "Analyze asset"), image: userMessageImg }]);
+    setLoading(true); setPrompt('');
+
+    // ============================================================================
+    // FRONTEND HEURISTIC INJECTOR (Zero Mock Data)
+    // Ensures the LLM has Live Feed Context to answer "best bets" queries
+    // ============================================================================
+    let injectedPrompt = activePrompt;
+    const lowerPrompt = activePrompt.toLowerCase();
+    if (lowerPrompt.includes('best bet') || lowerPrompt.includes('tomorrow') || lowerPrompt.includes('market') || lowerPrompt.includes('edge') || lowerPrompt.includes('query analysis')) {
+        try {
+            const liveData = globalFeedCache || await fetchGlobalFeed();
+            if (liveData && liveData.length > 0) {
+                const summarizedFeed = liveData.slice(0, 4).map(f => ({ 
+                    event: f.headline, 
+                    insight: f.summary, 
+                }));
+                injectedPrompt += `\n\n<SYSTEM_CONTEXT>\nYou are a live quantitative betting assistant. Based on the user's request, analyze these currently active high-value market discrepancies from the Aura Substrate: ${JSON.stringify(summarizedFeed)}. Provide a confident, data-driven recommendation.</SYSTEM_CONTEXT>`;
+            }
+        } catch (e) {
+            console.warn("[AURA:INTERCEPTOR] Failed to inject feed context", e);
+        }
+    }
+
     const history: AuraHistoryMessage[] = messages.reduce<AuraHistoryMessage[]>((acc, m) => {
        if (m.role === 'user' && m.content) acc.push({ role: 'user', content: m.content });
        else if (m.role === 'model' && m.artifacts) {
@@ -583,67 +601,63 @@ function ChatInterface({ user, token, onSignIn, loadingAuth }: ChatInterfaceProp
        return acc;
     }, []);
 
-    const userMessageImg = imagePreviewUrl || undefined;
-    const sendImg = selectedImage;
-    const sendMime = selectedMime;
+    const messagePayload: any = { 
+        message: injectedPrompt, 
+        history, 
+        domain: activeSubdomain, 
+        image: sendImg, 
+        imageMime: sendMime,
+        client_context: {
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            local_time: new Date().toISOString()
+        }
+    };
 
-    // Reset attachment states right away for snappy user feedback
-    setSelectedImage(null);
-    setSelectedMime(null);
-    setImagePreviewUrl(null);
-
-    setMessages(prev => [...prev, { 
-        id: generateId('usr'), 
-        role: 'user', 
-        content: activePrompt || "Analyze sports intelligence asset",
-        image: userMessageImg
-    }]);
-    setLoading(true);
-    setPrompt('');
-
-    if (activePrompt && (activePrompt.toLowerCase().trim() === 'schedule' || activePrompt.toLowerCase().trim() === 'mock')) {
-         setTimeout(() => {
-            setMessages(prev => [
-                ...prev,
-                { id: generateId('mod'), role: 'model', artifacts: [{ id: generateId('sch'), type: 'GAME_SCHEDULE_ARTIFACT', resolution_state: 'CONVERSATIONAL' }] }
-            ]);
-            setLoading(false);
-         }, 1000);
-         return;
+    if (contextData) {
+        messagePayload.context = { type: contextData.mimeType.includes('spreadsheet') || contextData.mimeType.includes('csv') ? 'csv_document' : 'html_document', id: contextData.id, name: contextData.name, content: contextData.csvContent || contextData.htmlContent };
     }
     
     try {
         const headers: Record<string, string> = { 'Content-Type': 'application/json' };
         if (token) headers['Authorization'] = `Bearer ${token}`;
         
-        const response = await fetch('/api/chat', {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({ 
-                message: activePrompt, 
-                history,
-                image: sendImg,
-                imageMime: sendMime
-            })
-        });
-
+        // Production Fetch -> Backend handles MCP tools
+        const response = await fetch('/api/chat', { method: 'POST', headers, body: JSON.stringify(messagePayload) });
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-        const data = await response.json();
+        if (!response.body) throw new Error("ReadableStream not supported");
         
-        if (data.artifacts) {
-            setMessages(prev => [...prev, { id: generateId('mod'), role: 'model', artifacts: data.artifacts }]);
-        } else {
-             throw new Error("No artifacts returned");
+        const reader = response.body.getReader(); const decoder = new TextDecoder("utf-8");
+        let currentText = ""; const modId = generateId('mod');
+        setMessages(prev => [...prev, { id: modId, role: 'model', artifacts: [] }]);
+
+        let doneReading = false; let buffer = "";
+        while (!doneReading) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n'); buffer = lines.pop() || "";
+            
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    const dataStr = line.slice(6);
+                    if (dataStr === '[DONE]') { doneReading = true; break; }
+                    try {
+                        const parsed = JSON.parse(dataStr);
+                        if (parsed.type === 'chunk') {
+                            currentText += parsed.text;
+                            setMessages(prev => prev.map(m => m.id === modId ? { ...m, artifacts: [{ id: modId + '_sys', type: 'SYSTEM_MESSAGE', resolution_state: 'CONVERSATIONAL', context_summary: currentText }] } : m));
+                        } else if (parsed.type === 'artifacts') {
+                            setMessages(prev => prev.map(m => m.id === modId ? { ...m, artifacts: parsed.artifacts } : m));
+                        }
+                    } catch(e) {}
+                }
+            }
         }
     } catch(e) {
-        setMessages(prev => [...prev, {
-            id: generateId('err'), role: 'model',
-            artifacts: [{ id: generateId('err_art'), type: 'SYSTEM_MESSAGE', resolution_state: 'GROUNDING_FAULT', context_summary: "Engine parsing sequence interrupted. Please try again." }]
-        }]);
-    } finally {
-        setLoading(false);
-    }
-  }
+        setMessages(prev => [...prev, { id: generateId('err'), role: 'model', artifacts: [{ id: generateId('err_art'), type: 'SYSTEM_MESSAGE', resolution_state: 'GROUNDING_FAULT', context_summary: "Execution logic interrupted. Please try again." }] }]);
+    } finally { setLoading(false); }
+  };
 
   const renderArtifact = useCallback((artifact: AuraArtifact) => {
       switch (artifact.resolution_state) {
@@ -651,7 +665,7 @@ function ChatInterface({ user, token, onSignIn, loadingAuth }: ChatInterfaceProp
               return (
                  <div key={artifact.id} className="bg-[#FF3B30]/10 border border-[#FF3B30]/20 rounded-[20px] p-6 mb-5 text-center backdrop-blur-md shadow-sm">
                      <AlertCircle className="h-6 w-6 text-[#FF3B30] mx-auto mb-3" strokeWidth={1.5} />
-                     <div className="text-[10px] font-bold tracking-widest uppercase text-[#FF3B30] select-none">Execution Fault</div>
+                     <div className="text-[10px] font-bold tracking-widest uppercase text-[#FF3B30] select-none font-mono">Execution Fault</div>
                      <div className="text-[13px] text-[#FF3B30]/80 mt-2 leading-relaxed font-mono">{artifact.context_summary}</div>
                  </div>
               );
@@ -660,8 +674,7 @@ function ChatInterface({ user, token, onSignIn, loadingAuth }: ChatInterfaceProp
                return (
                  <div key={artifact.id} className="bg-white/[0.015] border border-white/[0.04] border-dashed rounded-[24px] p-10 mb-5 text-center backdrop-blur-sm">
                      {artifact.resolution_state === 'NO_GAMES_SCHEDULED' ? <CalendarIcon className="h-6 w-6 text-neutral-600 mx-auto mb-3" strokeWidth={1.5} /> : <CloudFog className="h-6 w-6 text-neutral-600 mx-auto mb-3" strokeWidth={1.5} />}
-                     <div className="text-[10px] font-medium text-neutral-500 tracking-widest uppercase select-none">{artifact.resolution_state === 'OFF_SEASON' ? 'Off-Season' : 'No Events Found'}</div>
-                     <div className="text-[13px] text-neutral-400 mt-2 font-mono">{artifact.context_summary}</div>
+                     <div className="text-[10px] font-medium text-neutral-500 tracking-widest uppercase select-none">{artifact.context_summary}</div>
                  </div>
               );
       }
@@ -671,11 +684,12 @@ function ChatInterface({ user, token, onSignIn, loadingAuth }: ChatInterfaceProp
       if (artifact.type === 'WIN_PROBABILITY_ARTIFACT') return <WinProbabilityChart key={artifact.id} data={artifact.data} />;
       if (artifact.type === 'PLAYER_PROP_ARTIFACT') return <PlayerPropProgress key={artifact.id} data={artifact.data} />;
       if (artifact.type === 'BETTING_ANALYSIS' as any) return <AnalyticalMasterclass key={artifact.id} data={artifact.data} />;
+      if (artifact.type === 'WORKSPACE_MUTATION_ARTIFACT' as any) return <WorkspaceMutationCard key={artifact.id} data={artifact.data} summary={artifact.context_summary} />;
+      if (artifact.type === 'DRIVE_DOC_ARTIFACT' as any) return <DriveDocumentViewer key={artifact.id} data={artifact.data} />;
       if (artifact.type === 'YOUTUBE_MEDIA' as any) return <YoutubeMediaCard key={artifact.id} data={artifact.data} />;
 
       if ((artifact.type === 'SPORTS_ARTIFACT' || artifact.type === 'WAGERING_ARTIFACT') && artifact.resolution_state === 'LIVE_DATA') {
-          const d = artifact.data;
-          const gamesArr = Array.isArray(d) ? d : (d?.events || [d]);
+          const d = artifact.data; const gamesArr = Array.isArray(d) ? d : (d?.events || [d]);
           return <SportsCalendar key={artifact.id} games={gamesArr} leagueContext={d?.league_context} />;
       }
 
@@ -683,7 +697,7 @@ function ChatInterface({ user, token, onSignIn, loadingAuth }: ChatInterfaceProp
            return (
               <div key={artifact.id} className="bg-[#050505] border border-white/[0.04] rounded-[16px] p-6 mb-5 font-mono text-[11px] text-neutral-400 tabular-nums select-none shadow-inner">
                   <div className="flex justify-between items-center mb-5 text-neutral-300 border-b border-white/[0.04] pb-3">
-                      <span className="flex items-center gap-2 uppercase tracking-widest font-sans font-medium"><ShieldCheck className="h-4 w-4" /> System Receipt</span>
+                      <span className="flex items-center gap-2 uppercase tracking-widest font-sans font-bold text-[10px]"><ShieldCheck className="h-4 w-4" /> System Receipt</span>
                       {artifact.data?.verified && <span className="bg-white/10 px-2 py-0.5 rounded-[4px] text-white font-bold">VERIFIED</span>}
                   </div>
                   <div className="space-y-4 mt-2">
@@ -696,120 +710,62 @@ function ChatInterface({ user, token, onSignIn, loadingAuth }: ChatInterfaceProp
       }
 
       if ((artifact.type === 'SYSTEM_MESSAGE' || artifact.type === 'WORK_ARTIFACT') && (artifact.resolution_state === 'CONVERSATIONAL' || artifact.resolution_state === 'LIVE_DATA')) {
+          if (artifact.type === 'DRIVE_DOC_ARTIFACT' && artifact.data) setViewedDocument(artifact.data);
+          else if (viewedDocument && artifact.type !== 'DRIVE_DOC_ARTIFACT') setViewedDocument(null); 
+
           return (
-              <div key={artifact.id} className="bg-transparent mb-6 flex flex-col w-full text-left font-sans" aria-live="polite">
-                  <div className="text-[16px] text-white/90 leading-[1.65] font-sans antialiased font-normal max-w-none">
+              <div key={artifact.id} className="bg-transparent mb-6 flex flex-col w-full text-left font-sans group relative" aria-live="polite">
+                  <div className="absolute top-0 right-0 sm:-mr-12 opacity-0 group-hover:opacity-100 transition-opacity z-10 hidden sm:block">
+                      <MessageCopyButton text={artifact.context_summary || ''} />
+                  </div>
+                  <div className="text-[16px] text-white/95 leading-[1.65] font-sans antialiased font-normal max-w-none">
                       <Markdown remarkPlugins={CHAT_REMARK_PLUGINS} components={CHAT_MARKDOWN_COMPONENTS}>
-                         {artifact.context_summary || ''}
+                          {artifact.context_summary || ''}
                       </Markdown>
                   </div>
-                  {artifact.data?.groundingLinks && artifact.data.groundingLinks.length > 0 && (
-                     <div className="flex flex-col gap-3 mt-6 pt-5 border-t border-white/[0.04]">
-                         <div className="text-[9px] font-mono text-neutral-500 uppercase tracking-widest pl-1 select-none font-bold">Sources Verified</div>
-                         <div className="flex flex-wrap gap-2.5">
-                             {artifact.data.groundingLinks.map((link: { uri: string; title: string; }, idx: number) => (
-                                 <a 
-                                    key={idx} 
-                                    href={link.uri} 
-                                    target="_blank" 
-                                    rel="noopener noreferrer" 
-                                    className="flex items-center gap-2 px-3 py-1.5 bg-white/[0.02] hover:bg-white/[0.05] text-neutral-400 hover:text-neutral-200 border border-white/[0.04] hover:border-white/[0.08] rounded-[6px] text-[10px] font-mono tracking-wide transition-all duration-500 ease-[0.16,1,0.3,1] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/30 active:scale-[0.98]"
-                                >
-                                     <LinkIcon className="h-3 w-3 opacity-50 shrink-0" />
-                                     <span className="truncate max-w-[200px]">{link.title || 'Source'}</span>
-                                 </a>
-                             ))}
-                         </div>
-                     </div>
-                 )}
              </div>
           );
       }
+      return <div key={artifact.id} className="bg-white/[0.02] p-5 rounded-[24px] mb-5 border border-white/[0.04] text-[14px] text-neutral-300 shadow-sm">{artifact.context_summary}</div>;
+  }, [setViewedDocument, viewedDocument]);
 
-      return (
-           <div key={artifact.id} className="bg-white/[0.02] p-5 rounded-[24px] mb-5 border border-white/[0.04] text-[14px] text-neutral-300 font-normal leading-relaxed shadow-sm">
-               {artifact.context_summary}
-           </div>
-      );
-  }, []);
-
-  const tabs: { id: SubdomainTab; label: string }[] = [
-    { id: 'sports', label: 'Sports' },
-    { id: 'workspace', label: 'Workspace' },
-    { id: 'kalshi', label: 'Odds' }
-  ];
+  const tabs: { id: SubdomainTab; label: string }[] = [ { id: 'sports', label: 'Sports' }, { id: 'workspace', label: 'Workspace' }, { id: 'kalshi', label: 'Odds' } ];
 
   return (
     <>
-      <SEO title="Aura | Sports Intelligence" canonicalPath="/" />
-      <main className={`flex-1 overflow-y-auto p-4 sm:p-6 ${activeSubdomain === 'kalshi' ? 'max-w-6xl' : 'max-w-3xl'} mx-auto w-full flex flex-col pt-6 pb-[180px] sm:pb-[200px] relative z-10 scroll-smooth [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]`}>
+      <SEO title="Aura | Substrate Interface" canonicalPath="/" />
+      <main className={`flex-1 overflow-y-auto p-4 sm:p-6 ${activeSubdomain === 'kalshi' ? 'max-w-6xl' : 'max-w-[760px]'} mx-auto w-full flex flex-col pt-6 pb-[180px] sm:pb-[200px] relative z-10 scroll-smooth [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden`}>
           
-          {/* ============================================================================ */}
-          {/* APP LAUNCHER (Empty State) */}
-          {/* ============================================================================ */}
+          {/* APP LAUNCHER */}
           {messages.length === 0 && !loading && (
               <div className="flex flex-col items-center justify-center h-full mt-0 w-full animate-in fade-in duration-1000 ease-[0.16,1,0.3,1]">
-                  
-                  {/* SOTA Physical Segmented Control */}
-                  <div className="flex bg-[#1C1C1E]/80 backdrop-blur-md border border-white/[0.04] p-1 rounded-full max-w-[450px] w-full mb-12 select-none shadow-[0_8px_32px_rgba(0,0,0,0.4)] relative z-10 mx-auto">
+                  <div className="flex bg-[#0A0A0C] border border-white/[0.04] p-1.5 rounded-full max-w-[450px] w-full mb-12 select-none shadow-[0_8px_32px_rgba(0,0,0,0.4)] relative z-10 mx-auto">
                       {tabs.map((tab) => {
                           const isActive = activeSubdomain === tab.id;
                           return (
                               <button 
-                                 key={tab.id}
-                                 type="button"
-                                 onClick={() => setActiveSubdomain(tab.id)}
-                                 className={`relative flex-1 py-2 px-3 rounded-full text-[13px] font-semibold tracking-tight transition-colors duration-300 ease-[0.16,1,0.3,1] cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-white/20 z-10 ${isActive ? 'text-black' : 'text-[#8E8E93] hover:text-[#AEAEB2]'}`}
+                                 key={tab.id} type="button" onClick={() => setActiveSubdomain(tab.id)}
+                                 className={`relative flex-1 py-2.5 px-3 rounded-full text-[11px] font-mono font-bold uppercase tracking-widest transition-colors duration-300 ease-[0.16,1,0.3,1] outline-none z-10 ${isActive ? 'text-black' : 'text-neutral-500 hover:text-neutral-300'}`}
                               >
-                                  {isActive && (
-                                      <motion.div 
-                                          layoutId="activeSubdomainBg"
-                                          className="absolute inset-0 bg-white rounded-full z-[-1] shadow-[0_2px_8px_rgba(255,255,255,0.12)]"
-                                          transition={SPRING_TRANSITION}
-                                      />
-                                  )}
+                                  {isActive && <motion.div layoutId="activeSubdomainBg" className="absolute inset-0 bg-white rounded-full z-[-1] shadow-[0_2px_8px_rgba(255,255,255,0.12)]" transition={SPRING_TRANSITION} />}
                                   <span className="relative z-10">{tab.label}</span>
                               </button>
                           );
                       })}
                   </div>
 
-                  {/* Subdomain Content Routing */}
                   <AnimatePresence mode="wait">
                       {activeSubdomain === 'sports' ? (
-                          <motion.div 
-                              key="sports"
-                              initial={{ opacity: 0, y: 10 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              exit={{ opacity: 0, y: -10 }}
-                              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-                              className="w-full flex flex-col items-center"
-                          >
-                              <div className="w-full max-w-3xl mb-8">
-                                  <GameScheduleMock />
-                              </div>
+                          <motion.div key="sports" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: 0.3, ease: EASE_TRANSITION }} className="w-full flex flex-col items-center">
+                              <div className="w-full max-w-[760px] mb-8"><GameScheduleMock /></div>
                               <HomeFeed />
                           </motion.div>
                       ) : activeSubdomain === 'workspace' ? (
-                          <motion.div 
-                              key="workspace"
-                              initial={{ opacity: 0, y: 10 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              exit={{ opacity: 0, y: -10 }}
-                              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-                              className="w-full"
-                          >
+                          <motion.div key="workspace" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: 0.3, ease: EASE_TRANSITION }} className="w-full">
                               <WorkspaceOrchestrationBlueprint user={user} token={token} onSignIn={onSignIn} />
                           </motion.div>
                       ) : (
-                          <motion.div 
-                              key="kalshi"
-                              initial={{ opacity: 0, y: 10 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              exit={{ opacity: 0, y: -10 }}
-                              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-                              className="w-full"
-                          >
+                          <motion.div key="kalshi" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: 0.3, ease: EASE_TRANSITION }} className="w-full">
                               <KalshiMcpBlueprint />
                           </motion.div>
                       )}
@@ -817,54 +773,48 @@ function ChatInterface({ user, token, onSignIn, loadingAuth }: ChatInterfaceProp
               </div>
           )}
 
-          {/* ============================================================================ */}
-          {/* CHAT THREAD (Active State) */}
-          {/* ============================================================================ */}
+          {/* CHAT THREAD */}
           {messages.length > 0 && (
-              <div className="flex flex-col gap-8" aria-live="polite">
+              <div className="flex flex-col gap-8 relative max-w-[720px] mx-auto w-full" aria-live="polite">
+                 <div className="w-full flex items-center mb-4 mt-[-10px]">
+                     <button onClick={() => setMessages([])} className="flex items-center gap-2 text-[10px] font-mono font-bold uppercase tracking-widest text-neutral-400 hover:text-white transition-all bg-[#050505] hover:bg-[#0A0A0C] px-5 py-2.5 rounded-[8px] border border-white/[0.06] outline-none shadow-sm focus-visible:ring-2 focus-visible:ring-white/20 active:scale-95">
+                         <ArrowLeft className="w-3.5 h-3.5" /> Substrate Console
+                     </button>
+                 </div>
+                 
                  <AnimatePresence initial={false}>
                      {messages.map((msg, idx) => (
-                         <motion.div 
-                             initial={{ opacity: 0, y: 10, scale: 0.98 }}
-                             animate={{ opacity: 1, y: 0, scale: 1 }}
-                             transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-                             key={msg.id} 
-                             className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
-                         >
+                         <motion.div initial={{ opacity: 0, y: 10, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: 0.4, ease: EASE_TRANSITION }} key={msg.id} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
                              {msg.role === 'user' ? (
-                                 <div className="flex flex-col items-end gap-2.5 max-w-[85%]">
+                                 <div className="flex flex-col items-end gap-3 max-w-[85%]">
                                      {msg.image && (
-                                         <div className="overflow-hidden rounded-[20px] border border-white/10 max-h-[220px] max-w-sm shadow-xl bg-[#0A0A0C]">
-                                             <img src={msg.image} alt="Uploaded sports asset" className="object-cover max-h-[220px] w-auto h-auto rounded-[20px]" referrerPolicy="no-referrer" />
+                                         <div className="overflow-hidden rounded-[20px] border border-white/[0.06] max-h-[220px] max-w-sm shadow-xl bg-[#050505]">
+                                             <img src={msg.image} alt="User Context" className="object-cover max-h-[220px] w-auto h-auto rounded-[20px]" referrerPolicy="no-referrer" />
                                          </div>
                                      )}
-                                     <div className="bg-white/[0.08] border border-white/[0.04] text-white/95 px-5 py-3.5 rounded-[24px] rounded-br-[6px] text-[16px] font-normal leading-relaxed tracking-[-0.01em] shadow-sm backdrop-blur-md">
+                                     <div className="bg-[#111113] border border-white/[0.04] text-white/95 px-6 py-4 rounded-[24px] rounded-br-[8px] text-[16px] font-normal leading-[1.65] tracking-[-0.01em] shadow-sm backdrop-blur-md">
                                          {msg.content}
                                      </div>
                                  </div>
                              ) : (
                                  <div className="w-full flex flex-col items-start max-w-full">
+                                     {/* Render raw conversational text from the model properly */}
+                                     {msg.content && !msg.artifacts?.length && (
+                                          <div className="text-[16px] text-white/95 leading-[1.65] font-sans antialiased font-normal max-w-none w-full mb-4">
+                                              <Markdown remarkPlugins={CHAT_REMARK_PLUGINS} components={CHAT_MARKDOWN_COMPONENTS}>
+                                                  {msg.content}
+                                              </Markdown>
+                                          </div>
+                                     )}
+                                     
                                      {msg.artifacts?.map(renderArtifact)}
                                      
                                      {/* Contextual Action Chips */}
-                                     {(idx === messages.length - 1 && !loading) && msg.artifacts?.some(a => a.type === 'SPORTS_ARTIFACT') && (
-                                         <motion.div 
-                                            initial={{ opacity: 0, y: 5 }}
-                                            animate={{ opacity: 1, y: 0 }}
-                                            transition={{ delay: 0.3, duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-                                            className="w-full max-w-full overflow-hidden mt-5 relative select-none"
-                                         >
+                                     {(idx === messages.length - 1 && !loading) && msg.artifacts?.some(a => a.type === 'BETTING_ANALYSIS' || a.type === 'SPORTS_ARTIFACT') && (
+                                         <motion.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3, duration: 0.5, ease: EASE_TRANSITION }} className="w-full max-w-full overflow-hidden mt-5 relative select-none">
                                             <div className="flex overflow-x-auto gap-2.5 pb-2.5 pt-1 -mx-4 px-4 snap-x hide-scrollbars scroll-smooth w-full">
-                                                {["Next Game?", "Season Progress?", "Standings?"].map(q => (
-                                                    <motion.button 
-                                                        key={q}
-                                                        type="button"
-                                                        whileHover={{ scale: 1.02 }}
-                                                        whileTap={{ scale: 0.96 }}
-                                                        transition={SPRING_TRANSITION}
-                                                        onClick={() => handleQuery(undefined, q)} 
-                                                        className="snap-start shrink-0 px-6 h-10 flex items-center justify-center text-[10px] font-bold tracking-widest uppercase text-neutral-400 hover:text-white bg-white/[0.02] active:bg-white/[0.06] rounded-full border border-white/[0.06] transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-white/30 whitespace-nowrap cursor-pointer shadow-sm"
-                                                    >
+                                                {["Execute Limit Order", "Generate Win Probabilities", "Evaluate Derivatives"].map(q => (
+                                                    <motion.button key={q} type="button" whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.96 }} onClick={(e) => handleQuery(e, undefined)} className="snap-start shrink-0 px-5 h-9 flex items-center justify-center text-[10px] font-mono font-bold tracking-widest uppercase text-neutral-400 hover:text-white bg-[#0A0A0C] active:bg-[#111113] rounded-[6px] border border-white/[0.06] transition-colors duration-200 outline-none shadow-sm focus-visible:ring-2 focus-visible:ring-white/20">
                                                         {q}
                                                     </motion.button>
                                                 ))}
@@ -881,121 +831,128 @@ function ChatInterface({ user, token, onSignIn, loadingAuth }: ChatInterfaceProp
           )}
           
           {loading && (
-              <motion.div 
-                 initial={{ opacity: 0 }}
-                 animate={{ opacity: 1 }}
-                 transition={{ duration: 0.4 }}
-                 className="flex items-center justify-center mt-8 mb-4 gap-3 text-neutral-500 text-[10px] font-mono tracking-widest uppercase select-none font-bold"
-                 aria-live="polite"
-                 aria-busy="true"
-              >
-                 <span className="flex items-center gap-1.5 opacity-80">
-                    <motion.span 
-                        animate={{ opacity: [0.3, 1, 0.3] }} 
-                        transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut", delay: 0 }}
-                        className="w-2 h-2 bg-white rounded-full" 
-                    />
-                    <motion.span 
-                        animate={{ opacity: [0.3, 1, 0.3] }} 
-                        transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut", delay: 0.3 }}
-                        className="w-2 h-2 bg-[#9B72CB] rounded-full" 
-                    />
-                    <motion.span 
-                        animate={{ opacity: [0.3, 1, 0.3] }} 
-                        transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut", delay: 0.6 }}
-                        className="w-2 h-2 bg-[#D96570] rounded-full" 
-                    />
-                 </span>
-                 <span className="ml-1 tracking-widest">Synthesizing</span>
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.4 }} className="flex items-center justify-center mt-8 mb-4 gap-3 text-neutral-500 text-[10px] font-mono tracking-widest uppercase select-none font-bold" aria-live="polite" aria-busy="true">
+                 <motion.span animate={{ opacity: [0.2, 1, 0.2] }} transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }} className="w-2 h-2 bg-[#4285F4] rounded-full" />
+                 <span className="tracking-widest">Synthesizing</span>
               </motion.div>
           )}
       </main>
 
-      {/* Cinematic Glassmorphic Input Bar */}
+      {/* Input Bar */}
       <div className="fixed bottom-0 w-full p-4 sm:p-6 pb-[calc(env(safe-area-inset-bottom,24px)+16px)] sm:pb-10 bg-gradient-to-t from-[#000000] via-[#000000]/95 to-transparent pointer-events-none z-50 transform-gpu">
+         
+         {/* Contextual Suggestion Chips */}
+         {messages.length === 0 && !loading && (
+             <div className="max-w-[760px] mx-auto flex flex-wrap gap-2 mb-4 justify-center pointer-events-auto px-4">
+                 {SUGGESTED_PROMPTS[activeSubdomain].map(q => (
+                     <button 
+                        key={q} 
+                        onClick={(e) => { e.preventDefault(); handleQuery(q); }} 
+                        className="px-4 py-2 bg-[#050505] hover:bg-[#0A0A0C] border border-white/[0.06] rounded-full text-[10px] font-mono font-bold uppercase tracking-widest text-neutral-400 hover:text-white transition-colors shadow-sm outline-none focus-visible:ring-1 focus-visible:ring-white/20 active:scale-95 cursor-pointer"
+                     >
+                        {q}
+                     </button>
+                 ))}
+             </div>
+         )}
+
          <form 
-             onSubmit={handleQuery} 
-             onDragOver={handleDragOver}
-             onDragLeave={handleDragLeave}
-             onDrop={handleDrop}
-             className={`max-w-2xl mx-auto relative flex flex-col bg-[#0A0A0C]/80 backdrop-blur-[40px] saturate-[180%] rounded-[28px] border border-white/[0.08] shadow-[0_-12px_40px_rgba(0,0,0,0.5),inset_0_1px_2px_rgba(255,255,255,0.05)] overflow-hidden transition-all duration-500 ease-[0.16,1,0.3,1] focus-within:border-white/[0.2] focus-within:bg-[#121214]/90 focus-within:shadow-[0_0_80px_-20px_rgba(255,255,255,0.08)] pointer-events-auto supports-[backdrop-filter]:bg-[#0A0A0C]/60 group ${isDragging ? 'border-white/20 bg-[#121214]/95 shadow-[0_0_80px_-20px_rgba(255,255,255,0.1)]' : ''}`}
+             onSubmit={(e) => handleQuery(e)} 
+             onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}
+             className={`max-w-[760px] mx-auto relative flex flex-col bg-[#0A0A0C]/90 backdrop-blur-[40px] saturate-[180%] rounded-[32px] border border-white/[0.06] shadow-[0_-12px_40px_rgba(0,0,0,0.5),inset_0_1px_2px_rgba(255,255,255,0.05)] overflow-hidden transition-all duration-500 ease-[0.16,1,0.3,1] focus-within:border-white/[0.15] focus-within:bg-[#050505] focus-within:shadow-[0_0_80px_-20px_rgba(66,133,244,0.1)] pointer-events-auto supports-[backdrop-filter]:bg-[#0A0A0C]/70 group ${isDragging ? 'border-white/20 bg-[#0A0A0C] shadow-[0_0_80px_-20px_rgba(255,255,255,0.1)]' : ''}`}
          >
-            {/* Drag and Drop Overlay Indicator */}
-            {isDragging && (
-                <div className="absolute inset-0 bg-white/5 backdrop-blur-[2px] flex items-center justify-center text-[11px] font-mono tracking-widest uppercase text-white font-bold z-40 animate-pulse pointer-events-none">
-                    Drop Image Here
-                </div>
-            )}
+            {isDragging && <div className="absolute inset-0 bg-white/5 backdrop-blur-[2px] flex items-center justify-center text-[12px] font-mono tracking-widest uppercase text-white font-bold z-40 animate-pulse pointer-events-none">Drop Asset Here</div>}
 
-            {/* Image Attachment Preview Layer */}
-            {imagePreviewUrl && (
-                <div className="flex items-center gap-3 px-6 pt-4 pb-2 border-b border-white/[0.04] relative z-10 select-none">
-                    <div className="relative w-16 h-16 rounded-[12px] overflow-hidden border border-white/10 shadow-md">
-                        <img src={imagePreviewUrl} alt="Attachment Preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                        <button 
-                            type="button" 
-                            onClick={clearAttachment}
-                            className="absolute top-1 right-1 bg-black/60 hover:bg-black/90 text-white rounded-full p-0.5 opacity-100 transition-all duration-200 outline-none"
-                            aria-label="Remove image"
-                        >
-                            <X className="h-3 w-3" />
-                        </button>
-                    </div>
-                    <div className="flex flex-col text-left">
-                        <span className="text-white text-[12px] font-medium leading-none">Sports Asset Attached</span>
-                        <span className="text-neutral-500 text-[10px] font-mono mt-1 uppercase">Ready to Analyze</span>
-                    </div>
-                </div>
-            )}
+            <AnimatePresence>
+                {imagePreviewUrl && (
+                    <motion.div initial={{ opacity: 0, y: 10, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} transition={SPRING_TRANSITION} className="flex items-center gap-3 px-6 pt-4 pb-2 border-b border-white/[0.04] relative z-10 select-none">
+                        <div className="relative w-16 h-16 rounded-[12px] overflow-hidden border border-white/10 shadow-sm">
+                            <img src={imagePreviewUrl} alt="Preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                            <button type="button" onClick={clearAttachment} className="absolute top-1 right-1 bg-black/60 hover:bg-black/90 text-white rounded-full p-1 opacity-100 transition-all outline-none"><X className="h-3.5 w-3.5" /></button>
+                        </div>
+                        <div className="flex flex-col text-left">
+                            <span className="text-white/95 text-[13px] font-medium leading-none">Context Asset Attached</span>
+                            <span className="text-neutral-500 text-[10px] font-mono mt-1.5 uppercase font-bold tracking-widest">Ready to Analyze</span>
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
 
-            {/* Input Controls Row */}
-            <div className="flex items-center w-full relative z-10">
-                <label htmlFor="chat-input" className="sr-only">Query analysis or data</label>
-                <div className="pl-6 pr-2 text-neutral-500 group-focus-within:text-neutral-400 transition-colors duration-300 relative z-10" aria-hidden="true">
-                    <Search className="h-[18px] w-[18px]" strokeWidth={2} />
-                </div>
+            <div className="flex items-end w-full relative z-10 mt-1">
+                <div className="pl-6 pr-2 text-neutral-500 group-focus-within:text-[#4285F4] transition-colors duration-300 relative z-10 pb-4" aria-hidden="true"><Search className="h-[20px] w-[20px]" strokeWidth={2} /></div>
                 
-                <input
-                  id="chat-input"
+                <textarea
+                  aria-label="Substrate Query Input"
                   value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  placeholder={imagePreviewUrl ? "Ask about this image..." : "Ask Aura about games, schedules, or statistics..."}
-                  className="flex-1 bg-transparent border-none outline-none py-4 text-[16px] text-white/95 placeholder:text-neutral-500 font-sans font-normal tracking-[-0.01em] disabled:opacity-50 disabled:cursor-not-allowed appearance-none animate-none relative z-10"
-                  disabled={loading}
-                  autoComplete="off"
+                  onChange={(e) => { setPrompt(e.target.value); e.target.style.height = 'auto'; e.target.style.height = `${Math.min(e.target.scrollHeight, 150)}px`; }}
+                  onKeyDown={(e) => { 
+                      // Strictly prevent form default submission on Enter
+                      if (e.key === 'Enter' && !e.shiftKey) { 
+                          e.preventDefault(); 
+                          handleQuery(); 
+                      } 
+                  }}
+                  placeholder={imagePreviewUrl ? "Ask about this asset..." : "Command Substrate..."}
+                  className="flex-1 bg-transparent border-none outline-none py-4 text-[16px] text-white/95 placeholder:text-neutral-500 font-sans font-normal tracking-[-0.01em] disabled:opacity-50 disabled:cursor-not-allowed appearance-none animate-none relative z-10 resize-none min-h-[56px] [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                  disabled={loading} rows={1}
                 />
 
-                {/* Premium Camera Button */}
-                <div className="px-1 flex items-center relative z-10">
-                    <input 
-                        id="image-upload-input"
-                        type="file"
-                        accept="image/*"
-                        onChange={handleFileChange}
-                        className="hidden"
-                    />
-                    <button
-                        type="button"
-                        onClick={() => document.getElementById('image-upload-input')?.click()}
-                        className={`p-2 rounded-full text-neutral-400 hover:text-white hover:bg-white/[0.04] active:bg-white/[0.08] transition-all duration-300 ${(selectedImage || loading) ? 'opacity-50 pointer-events-none' : 'cursor-pointer'}`}
-                        title="Upload matching image (scorecards, slips, players, stats)"
-                        aria-label="Upload Sports Image"
-                    >
-                        <Camera className="h-[18px] w-[18px]" strokeWidth={2} />
-                    </button>
+                <div className="px-1 flex items-end relative z-10 pb-3">
+                    <input id="image-upload-input" type="file" accept="image/*" onChange={handleFileChange} className="hidden" />
+                    <button type="button" onClick={() => document.getElementById('image-upload-input')?.click()} className={`p-2.5 rounded-full text-neutral-500 hover:text-white hover:bg-white/[0.04] active:bg-white/[0.08] transition-all outline-none ${(selectedImage || loading) ? 'opacity-50 pointer-events-none' : 'cursor-pointer'}`}><Camera className="h-[20px] w-[20px]" strokeWidth={2} /></button>
                 </div>
                 
-                <div className="pr-2 pl-1 relative z-10">
+                <div className="pr-2 pl-1 relative z-10 pb-3">
                     <button 
-                      disabled={loading || (!prompt.trim() && !selectedImage)}
-                      type="submit" 
-                      className={`bg-white text-black p-2.5 w-10 h-10 rounded-full transition-all duration-500 ease-[0.16,1,0.3,1] flex items-center justify-center cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 shadow-[0_2px_8px_rgba(255,255,255,0.15)] ${loading ? 'opacity-50 scale-95 animate-pulse' : 'hover:scale-[1.05] active:scale-[0.92] disabled:opacity-0 disabled:scale-75'}`}
-                      aria-label="Submit Query"
+                      disabled={loading || (!prompt.trim() && !selectedImage)} type="submit" 
+                      className={`bg-white text-black p-3 w-11 h-11 rounded-full transition-all duration-500 ease-[0.16,1,0.3,1] flex items-center justify-center shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 shadow-[0_4px_12px_rgba(255,255,255,0.15)] ${loading ? 'opacity-50 scale-95' : 'hover:scale-[1.05] active:scale-[0.92] disabled:opacity-0 disabled:scale-75 cursor-pointer'}`}
                     >
-                        <Send className="h-[16px] w-[16px] translate-x-[-0.5px] translate-y-[-0.5px]" strokeWidth={2.5} />
+                        <Send className="h-[18px] w-[18px] translate-x-[-0.5px] translate-y-[-0.5px]" strokeWidth={2.5} />
                     </button>
                 </div>
             </div>
+            
+            {viewedDocument && (
+                <motion.div 
+                    initial={{ opacity: 0, y: 20 }} 
+                    animate={{ opacity: 1, y: 0 }} 
+                    exit={{ opacity: 0, y: 20 }} 
+                    transition={SPRING_TRANSITION}
+                    className="absolute -top-20 left-0 right-0 px-6 py-4 bg-[#0A0A0C]/90 backdrop-blur-md border border-white/[0.08] shadow-[0_4px_20px_rgba(0,0,0,0.5)] flex items-center justify-between z-40 rounded-[16px] mx-4 mb-4"
+                >
+                    <div className="flex items-center gap-3">
+                        {viewedDocument.mimeType.includes('spreadsheet') || viewedDocument.mimeType.includes('csv') ? (
+                            <FileSpreadsheet className="w-5 h-5 text-emerald-400" />
+                        ) : (
+                            <FileText className="w-5 h-5 text-blue-400" />
+                        )}
+                        <span className="text-[13px] font-medium text-white/95 truncate max-w-[150px] sm:max-w-[250px]">Context: {viewedDocument.name}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <button 
+                            type="button" 
+                            onClick={() => handleQuery(`Summarize this file for a client.`, viewedDocument)} 
+                            className="flex items-center gap-2 px-4 py-2 bg-white/[0.05] hover:bg-white/[0.1] rounded-full text-[12px] font-medium text-white transition-colors outline-none focus-visible:ring-2 focus-visible:ring-white/20"
+                        >
+                            <Sparkles className="w-3.5 h-3.5 text-blue-400" /> Summarize
+                        </button>
+                        <button 
+                            type="button" 
+                            onClick={() => handleQuery(`Extract key values from this file.`, viewedDocument)} 
+                            className="flex items-center gap-2 px-4 py-2 bg-white/[0.05] hover:bg-white/[0.1] rounded-full text-[12px] font-medium text-white transition-colors outline-none focus-visible:ring-2 focus-visible:ring-white/20"
+                        >
+                            <Filter className="w-3.5 h-3.5 text-purple-400" /> Extract Values
+                        </button>
+                        <button 
+                            type="button" 
+                            onClick={() => setViewedDocument(null)} 
+                            className="p-2 rounded-full text-neutral-500 hover:text-white hover:bg-white/[0.05] transition-colors outline-none"
+                        >
+                            <X className="w-4 h-4" />
+                        </button>
+                    </div>
+                </motion.div>
+            )}
          </form>
       </div>
     </>
@@ -1003,175 +960,109 @@ function ChatInterface({ user, token, onSignIn, loadingAuth }: ChatInterfaceProp
 }
 
 // ============================================================================
-// Canonical Pages
+// Canonical Pages 
 // ============================================================================
 function CanonicalEntityPage() {
     const { id } = useParams<{ id: string }>();
-    const { feed, loading } = useFeedData();
-    const story = useMemo(() => feed.find(c => c.id === id || c.slug === id), [feed, id]);
+    const navigate = useNavigate();
+    
+    // Dynamic Fetching (No Mock Arrays)
+    const { story, loading } = useStoryData(id);
 
-    const validDate = useMemo(() => {
-        if (!story?.publishedAt) return '';
-        const d = new Date(story.publishedAt);
-        return isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-    }, [story?.publishedAt]);
+    const { scrollYProgress, scrollY } = useScroll();
+    const scaleX = useSpring(scrollYProgress, { stiffness: 100, damping: 30, restDelta: 0.001 });
+    const heroY = useTransform(scrollY, [0, 600], [0, 200]);
+    const heroOpacity = useTransform(scrollY, [0, 400], [1, 0]);
 
-    if (loading) return <div className="p-16 text-center text-neutral-500 text-[11px] font-mono tracking-widest uppercase animate-pulse select-none mt-20">Resolving Context...</div>;
-    if (!story) return <div className="p-16 text-center text-neutral-500 text-[14px] mt-20 font-sans">Context not found or expired.</div>;
+    if (loading) return <div className="p-16 text-center text-neutral-500 text-[10px] font-mono tracking-widest uppercase font-bold mt-20 animate-pulse">Resolving Substrate Link...</div>;
+    if (!story) return <div className="p-16 text-center text-neutral-500 text-[14px] mt-20 font-sans">Asset not found.</div>;
+
+    const isExternalNews = story.type === 'EXTERNAL_NEWS';
+    const isPrediction = story.type === 'PREDICTION_MARKET';
+    const sourceStyling = getSourceBrandStyling(story.source);
 
     return (
-        <article className="max-w-3xl mx-auto w-full p-6 sm:p-8 animate-in fade-in slide-in-from-bottom-8 duration-700 ease-[0.16,1,0.3,1] pt-10 pb-40 text-left">
+        <article className="w-full pb-40 text-left bg-[#000000] relative font-sans">
             <SEO title={`${story.headline} | Aura`} canonicalPath={`/story/${story.slug || story.id}`} />
-            
-            <Link to="/" className="inline-flex items-center gap-2 text-neutral-500 hover:text-white transition-all duration-300 ease-[0.16,1,0.3,1] active:scale-[0.96] mb-10 text-[10px] font-mono uppercase tracking-widest rounded-[4px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20 px-1 py-0.5 -ml-1">
-               <ArrowLeft className="h-4 w-4" strokeWidth={1.5} /> Return to Feed
-            </Link>
+            <motion.div style={{ scaleX }} className={`fixed top-0 left-0 right-0 h-[4px] origin-left z-50 shadow-[0_0_15px_rgba(255,255,255,0.4)] ${isExternalNews ? sourceStyling.bg : 'bg-[#4285F4]'}`} />
 
-            <header className="flex flex-wrap gap-3 items-center mb-6 select-none font-sans">
-                 {story.priority === 'high_live' && (
-                    <div className="inline-flex items-center gap-1.5 bg-white/[0.05] px-2 py-0.5 rounded-[4px] border border-white/10 font-sans">
-                       <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
-                       <span className="text-[10px] font-bold text-white uppercase tracking-widest font-sans">Live</span>
+            <div className="w-full h-[65vh] sm:h-[80vh] relative bg-[#000000] overflow-hidden">
+                <motion.div style={{ y: heroY, opacity: heroOpacity }} className="absolute inset-0 w-full h-full">
+                    <SafeImage src={story.image_url!} alt={story.headline} containerClassName="w-full h-full border-none" imageClassName={`opacity-80 object-cover object-center ${isExternalNews ? 'grayscale-[0.05]' : 'grayscale-[0.3]'}`} kenBurns={true} priority />
+                </motion.div>
+                
+                <div className="absolute inset-0 bg-gradient-to-t from-[#000000] via-[#000000]/60 to-transparent z-10" />
+                <div className="absolute inset-0 bg-gradient-to-b from-[#000000]/30 via-transparent to-transparent z-10" />
+                
+                <div className="absolute inset-0 flex flex-col justify-end px-6 sm:px-12 pb-16 max-w-[840px] mx-auto w-full z-20">
+                    <button onClick={() => navigate(-1)} className="absolute top-8 left-6 sm:left-12 inline-flex items-center gap-2 text-white/80 hover:text-white transition-all duration-300 active:scale-95 bg-black/40 backdrop-blur-md px-4 py-2 rounded-full border border-white/10 text-[10px] font-mono uppercase tracking-widest font-bold outline-none shadow-sm focus-visible:ring-2 focus-visible:ring-white/20">
+                       <ArrowLeft className="h-4 w-4" strokeWidth={2} /> Return
+                    </button>
+
+                    <div className="flex flex-wrap gap-3 items-center mb-6 select-none font-sans">
+                        {isExternalNews ? (
+                            <span className={`text-[12px] font-mono ${sourceStyling.text} uppercase tracking-widest font-bold bg-black/80 backdrop-blur-sm px-3 py-1.5 rounded-[6px] border ${sourceStyling.border} shadow-sm flex items-center gap-2`}>
+                                <Globe className={`w-3.5 h-3.5 ${sourceStyling.text}`} /> {story.category || 'External Context'}
+                            </span>
+                        ) : (
+                            <span className="text-[12px] font-mono text-[#4285F4] uppercase tracking-widest font-bold bg-[#4285F4]/10 px-3 py-1.5 rounded-[6px] border border-[#4285F4]/20 shadow-sm">{story.category || 'Intelligence'}</span>
+                        )}
                     </div>
-                 )}
-                <span className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest font-bold">{story.category || 'Intelligence'}</span>
-                {validDate && (
-                    <>
-                        <span className="text-neutral-700 mx-1">•</span>
-                        <time dateTime={new Date(story.publishedAt).toISOString()} className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest tabular-nums lining-nums">
-                            {validDate}
-                        </time>
-                    </>
+                    <h1 className="text-[38px] sm:text-[64px] font-medium tracking-tight text-white/95 leading-[1.05] mb-8 drop-shadow-2xl max-w-3xl">
+                        {story.headline}
+                    </h1>
+                    <div className="flex items-center gap-3 text-[12px] font-mono text-neutral-300 uppercase tracking-widest tabular-nums lining-nums font-bold drop-shadow">
+                        {isExternalNews ? <span className="flex items-center gap-2 text-white"><span className={`w-2.5 h-2.5 rounded-full ${sourceStyling.bg}`} /> {story.source}</span> : <span>{story.source || 'Aura Protocol'}</span>}
+                    </div>
+                </div>
+            </div>
+
+            <div className={`max-w-[720px] mx-auto px-6 sm:px-0 relative z-30 pt-4`}>
+                
+                {isExternalNews && story.source_url && (
+                    <a href={story.source_url} target="_blank" rel="noopener noreferrer" className={`flex items-center justify-between w-full p-6 bg-[#0A0A0C] border ${sourceStyling.border} rounded-[12px] mb-12 hover:bg-[#111113] transition-colors group outline-none focus-visible:ring-2 focus-visible:ring-white/20`}>
+                        <div className="flex items-center gap-4">
+                            <div className={`w-10 h-10 rounded-[8px] ${sourceStyling.bg} flex items-center justify-center border border-white/10 shrink-0`}><ExternalLink className={`w-4 h-4 text-white`} /></div>
+                            <div className="flex flex-col"><span className="text-[15px] font-bold text-white">Read Original Article</span><span className="text-[12px] font-mono text-neutral-500 uppercase tracking-widest">via {story.source}</span></div>
+                        </div>
+                        <ChevronRight className={`w-5 h-5 text-neutral-500 group-hover:text-white transition-colors`} />
+                    </a>
                 )}
-            </header>
 
-            <h1 className="text-[32px] sm:text-[40px] font-medium tracking-[-0.03em] text-white/95 leading-[1.1] mb-8">
-                {story.headline}
-            </h1>
-
-            {story.image_url && (
-                <figure className="w-full aspect-[21/9] sm:aspect-[16/9] rounded-[24px] overflow-hidden mb-12 bg-[#0A0A0C] border border-white/[0.04] relative shadow-[0_8px_30px_rgba(0,0,0,0.12)]">
-                    <SafeImage 
-                        src={story.image_url} 
-                        alt={story.headline} 
-                        containerClassName="absolute inset-0"
-                        imageClassName="opacity-90 grayscale-[0.1]" 
-                    />
-                </figure>
-            )}
-
-            <div className="max-w-[640px] mx-auto text-white/85 text-[17px] sm:text-[19px] font-serif font-normal leading-[1.7] space-y-7">
-                {story.type === 'PREDICTION_MARKET' ? (
-                    <div className="bg-[#050505] rounded-[24px] p-8 sm:p-10 my-8 text-center border border-white/[0.04] backdrop-blur-md shadow-inner">
-                        <div className="inline-flex items-center gap-2 text-neutral-400 text-[10px] font-bold uppercase tracking-widest mb-8 select-none font-sans">
-                            <Activity className="w-3 h-3 text-neutral-400" />
-                            Live Kalshi Market
-                        </div>
-                        <h2 className="text-[26px] font-sans font-medium text-white/95 leading-[1.2] mb-10 tracking-tight">
-                            {story.headline}
-                        </h2>
-                        <div className="flex justify-center items-center gap-12 mb-10 select-none font-sans">
-                            <div className="text-center">
-                                <div className="text-[10px] text-neutral-500 font-mono uppercase tracking-widest mb-3">Implied Yes</div>
-                                <div className="text-[48px] font-sans font-medium text-white/95 tabular-nums lining-nums leading-none tracking-tighter">
-                                    {story.metadata?.yes_price || 50}<span className="text-[24px] text-neutral-600 font-normal ml-1">%</span>
-                                </div>
+                {isPrediction ? (
+                    <div className="bg-[#050505] rounded-[24px] p-8 sm:p-12 my-8 text-center border border-white/[0.08] shadow-2xl transform-gpu w-[calc(100%+32px)] -ml-4 sm:w-full sm:ml-0">
+                        <div className="inline-flex items-center gap-2 text-[#34C759] text-[11px] font-bold uppercase tracking-widest mb-10 select-none font-sans bg-[#34C759]/10 px-4 py-2 rounded-full border border-[#34C759]/20"><Activity className="w-4 h-4" /> Kalshi Market Node</div>
+                        <h2 className="text-[32px] sm:text-[40px] font-sans font-medium text-white/95 leading-[1.2] mb-12 tracking-tight max-w-2xl mx-auto">{story.headline}</h2>
+                        <div className="flex flex-col sm:flex-row justify-center items-center gap-8 sm:gap-16 mb-12 select-none font-sans">
+                            <div className="text-center flex-1">
+                                <div className="text-[12px] text-neutral-500 font-mono uppercase tracking-widest mb-4 font-bold">Implied Yes</div>
+                                <div className="text-[64px] sm:text-[80px] font-sans font-medium text-white/95 tabular-nums lining-nums leading-none tracking-tighter drop-shadow-md">{story.metadata?.kalshi_yes_price || 50}<span className="text-[32px] sm:text-[40px] text-neutral-600 font-normal ml-1">%</span></div>
                             </div>
-                            <div className="w-[1px] h-20 bg-white/[0.04]" />
-                            <div className="text-center">
-                                <div className="text-[10px] text-neutral-500 font-mono uppercase tracking-widest mb-3">Implied No</div>
-                                <div className="text-[48px] font-sans font-medium text-neutral-400 tabular-nums lining-nums leading-none tracking-tighter">
-                                    {story.metadata?.no_price || 100 - (story.metadata?.yes_price || 50)}<span className="text-[24px] text-neutral-600 font-normal ml-1">%</span>
-                                </div>
+                            <div className="w-full sm:w-px h-px sm:h-32 bg-white/[0.08]" />
+                            <div className="text-center flex-1">
+                                <div className="text-[12px] text-neutral-500 font-mono uppercase tracking-widest mb-4 font-bold">Implied No</div>
+                                <div className="text-[64px] sm:text-[80px] font-sans font-medium text-neutral-500 tabular-nums lining-nums leading-none tracking-tighter drop-shadow-md">{100 - (story.metadata?.kalshi_yes_price || 50)}<span className="text-[32px] sm:text-[40px] text-neutral-700 font-normal ml-1">%</span></div>
                             </div>
                         </div>
-                        <div className="flex justify-center gap-4 font-sans">
-                            <button className="bg-white/10 hover:bg-white/20 text-white border border-white/10 min-w-[160px] text-[13px] font-mono font-bold uppercase tracking-widest py-3.5 rounded-full transition-all duration-300 ease-[0.16,1,0.3,1] active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 cursor-pointer">Execute Yes</button>
-                            <button className="bg-transparent hover:bg-white/[0.04] text-neutral-300 border border-white/[0.08] min-w-[160px] text-[13px] font-mono font-bold uppercase tracking-widest py-3.5 rounded-full transition-all duration-300 ease-[0.16,1,0.3,1] active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 cursor-pointer">Execute No</button>
+                        <div className="flex flex-col sm:flex-row justify-center gap-4 max-w-lg mx-auto font-sans">
+                            <button className="flex-1 bg-white hover:bg-neutral-200 text-black min-w-[160px] text-[14px] font-bold uppercase tracking-widest py-4 rounded-[8px] transition-all duration-300 active:scale-[0.98] outline-none shadow-sm">Buy Yes</button>
+                            <button className="flex-1 bg-[#111113] hover:bg-[#18181b] text-white border border-white/[0.08] min-w-[160px] text-[14px] font-bold uppercase tracking-widest py-4 rounded-[8px] transition-all duration-300 active:scale-[0.98] outline-none shadow-sm">Buy No</button>
                         </div>
                     </div>
                 ) : (
-                    <div className="prose prose-invert max-w-none prose-p:font-serif">
-                        <Markdown
-                            remarkPlugins={CHAT_REMARK_PLUGINS}
-                            components={{
-                                ...CHAT_MARKDOWN_COMPONENTS,
-                                p: ({node, ...props}) => <p className="mb-6 last:mb-0 text-white/85 font-serif" {...props} />,
-                            }}
-                        >
-                            {story.editorial_copy || story.ai_analysis || story.summary}
+                    <div className="w-full max-w-none text-left">
+                        <Markdown remarkPlugins={CHAT_REMARK_PLUGINS} components={EDITORIAL_MARKDOWN_COMPONENTS}>
+                            {story.editorial_copy || story.summary}
                         </Markdown>
                     </div>
                 )}
                  
-                 {(story.betting_angle || story.metadata?.kalshi_market_injected) && (
-                     <aside className="bg-[#050505] rounded-[24px] p-6 sm:p-8 my-12 relative border border-white/[0.04] font-sans shadow-sm">
-                        <div className="flex items-center gap-3 mb-6 select-none animate-none">
-                            {story.metadata?.kalshi_market_injected ? (
-                                <span className="text-neutral-400 text-[10px] font-bold uppercase tracking-widest flex items-center gap-2">
-                                    <Activity className="w-3.5 h-3.5" />
-                                    Order Book Read
-                                </span>
-                            ) : (
-                                <span className="text-neutral-400 text-[10px] font-bold uppercase tracking-widest flex items-center gap-2">
-                                    Identified Value
-                                </span>
-                            )}
-                        </div>
-                        
-                        {story.metadata?.kalshi_market_injected ? (
-                            <div className="flex flex-col gap-6">
-                                <div>
-                                    <h3 className="text-[17px] font-medium text-white/95 leading-[1.3] mb-2 tracking-tight">
-                                        {story.metadata.kalshi_title}
-                                    </h3>
-                                </div>
-                                <div className="flex items-center gap-6 bg-[#0A0A0A] rounded-[16px] p-5 border border-white/[0.04] select-none">
-                                    <div className="flex-1 w-full flex flex-col">
-                                        <div className="flex justify-between text-[11px] font-mono text-neutral-400 mb-3 tabular-nums lining-nums uppercase tracking-widest font-bold">
-                                            <span className="text-[#34C759]">Yes {story.metadata.kalshi_yes_price}%</span>
-                                            <span className="text-neutral-600">No {100 - (story.metadata.kalshi_yes_price || 0)}%</span>
-                                        </div>
-                                        <div className="w-full h-1.5 rounded-full bg-white/[0.04] overflow-hidden relative" role="progressbar" aria-valuenow={story.metadata.kalshi_yes_price} aria-valuemin={0} aria-valuemax={100}>
-                                            <div 
-                                                className="absolute top-0 left-0 h-full bg-[#34C759] rounded-full shadow-[0_0_12px_rgba(52,199,89,0.4)] transition-all duration-1000 ease-[0.16,1,0.3,1]"
-                                                style={{ width: `${story.metadata.kalshi_yes_price}%` }}
-                                            />
-                                        </div>
-                                        {story.metadata.kalshi_american_odds && (
-                                            <div className="text-[10px] font-mono text-[#34C759]/80 mt-4 tabular-nums lining-nums text-center">
-                                                Moneyline: {story.metadata.kalshi_american_odds}
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-                            </div>
-                        ) : (
-                            <p className="text-neutral-300 text-[15px] font-normal leading-relaxed">
-                                {story.betting_angle}
-                            </p>
-                        )}
-                     </aside>
-                 )}
-
-                 {story.factual_claims && story.factual_claims.length > 0 && (
-                     <footer className="text-[10px] font-mono text-neutral-600 pt-8 mt-12 border-t border-white/[0.04] uppercase tracking-widest leading-relaxed select-none">
-                         <span className="text-neutral-500 font-bold">Cross-referenced via: </span> {Array.from(new Set(story.factual_claims.map((c: any) => c.source_entity))).join(', ')}
+                {!isExternalNews && story.factual_claims && story.factual_claims.length > 0 && (
+                     <footer className="text-[11px] font-mono text-neutral-600 pt-10 mt-16 border-t border-white/[0.04] uppercase tracking-widest leading-relaxed select-none font-bold text-center">
+                         <span className="text-neutral-500">Provenance Validated via: </span> {Array.from(new Set(story.factual_claims.map((c: any) => c.source_entity))).join(', ')}
                      </footer>
-                 )}
+                )}
             </div>
-
-            <footer className="mt-16 pt-8 border-t border-white/[0.04] flex items-center justify-between max-w-[640px] mx-auto select-none">
-                <div className="flex items-center gap-4">
-                    <div className="h-10 w-10 rounded-[10px] bg-[#050505] border border-white/[0.05] flex items-center justify-center text-neutral-500 font-mono text-[14px]">A</div>
-                    <div>
-                        <div className="text-[12px] font-medium text-neutral-300 tracking-wide">Aura Sports</div>
-                        <div className="text-[10px] text-neutral-600 font-mono mt-1 uppercase tracking-widest">
-                            Verified Context
-                        </div>
-                    </div>
-                </div>
-            </footer>
         </article>
     );
 }
@@ -1188,27 +1079,27 @@ function CategoryHubPage() {
     const displayCategory = category ? decodeURIComponent(category).charAt(0).toUpperCase() + decodeURIComponent(category).slice(1) : "Hub";
 
     return (
-        <div className="max-w-3xl mx-auto w-full p-6 sm:p-8 animate-in fade-in slide-in-from-bottom-4 duration-700 ease-[0.16,1,0.3,1] pt-10 pb-40 text-left">
-           <Link to="/" className="inline-flex items-center gap-2 text-neutral-500 hover:text-white transition-all duration-300 ease-[0.16,1,0.3,1] active:scale-[0.98] mb-10 text-[10px] font-mono uppercase tracking-widest rounded-[4px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20 px-1 py-0.5 -ml-1">
-               <ArrowLeft className="h-4 w-4" strokeWidth={1.5} /> Dashboard
+        <div className="max-w-[760px] mx-auto w-full p-6 sm:p-8 animate-in fade-in slide-in-from-bottom-4 duration-700 ease-[0.16,1,0.3,1] pt-10 pb-40 text-left font-sans">
+           <Link to="/" className="inline-flex items-center gap-2 text-neutral-500 hover:text-white transition-all duration-300 active:scale-[0.98] mb-10 text-[10px] font-mono font-bold uppercase tracking-widest rounded-[8px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20 px-4 py-2 bg-[#0A0A0C] border border-white/[0.08] shadow-sm">
+               <ArrowLeft className="h-4 w-4" strokeWidth={1.5} /> Substrate Console
            </Link>
-           <h1 className="text-[26px] font-medium tracking-tight mb-10 text-white/95">Latest in {displayCategory}</h1>
+           <h1 className="text-[32px] font-medium tracking-tight mb-10 text-white/95">Latest in {displayCategory}</h1>
            
            {loading ? (
                <div className="space-y-6 animate-pulse" aria-busy="true">
-                   {[1, 2, 3].map(i => <div key={i} className="h-32 bg-white/[0.02] rounded-[24px] border border-white/[0.04]" />)}
+                   {[1, 2, 3].map(i => <div key={i} className="h-32 bg-[#050505] rounded-[16px] border border-white/[0.08]" />)}
                </div>
            ) : filteredFeed.length === 0 ? (
-               <div className="text-neutral-500 font-mono text-[11px] uppercase tracking-widest text-center bg-white/[0.015] border border-white/[0.04] rounded-[24px] p-10 border-dashed select-none">
+               <div className="text-neutral-500 text-[11px] font-mono tracking-widest text-center bg-[#050505] border border-white/[0.08] p-10 rounded-[16px] border-dashed select-none uppercase font-bold">
                    No intelligence available in this sector.
                </div>
            ) : (
                <div className="space-y-6">
                    {filteredFeed.map(story => (
-                       <Link key={story.id} to={`/story/${story.slug || story.id}`} className="block border border-white/[0.04] bg-[#050505] p-6 sm:p-8 rounded-[24px] hover:bg-[#0c0c0e] transition-all duration-500 ease-[0.16,1,0.3,1] active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 font-sans cursor-pointer">
-                           <h2 className="text-[18px] font-medium text-neutral-100 mb-3 tracking-tight">{story.headline}</h2>
-                           <p className="text-[14px] text-neutral-400 line-clamp-2 leading-[1.65]">{story.summary}</p>
-                           <time dateTime={new Date(story.publishedAt).toISOString()} className="mt-6 block text-[10px] font-mono text-neutral-500 uppercase tracking-widest tabular-nums lining-nums">
+                       <Link key={story.id} to={`/story/${story.slug || story.id}`} className="block border border-white/[0.08] bg-[#050505] p-6 sm:p-8 rounded-[16px] hover:bg-[#0A0A0C] hover:border-white/[0.15] transition-all duration-300 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 font-sans cursor-pointer shadow-sm">
+                           <h2 className="text-[20px] font-medium text-white/95 mb-3 tracking-tight leading-[1.3]">{story.headline}</h2>
+                           <p className="text-[15px] text-neutral-400 line-clamp-2 leading-[1.65] font-serif tracking-[-0.01em]">{story.summary}</p>
+                           <time dateTime={new Date(story.publishedAt).toISOString()} className="mt-6 block text-[10px] font-mono text-neutral-500 uppercase tracking-widest tabular-nums lining-nums font-bold">
                                 {new Date(story.publishedAt).toLocaleDateString()}
                            </time>
                        </Link>
@@ -1222,80 +1113,82 @@ function CategoryHubPage() {
 function TeamCanonicalPage() {
     const { slug } = useParams<{ slug: string }>();
     return (
-        <div className="max-w-3xl mx-auto w-full p-6 sm:p-8 pt-10 animate-in fade-in text-left">
+        <div className="max-w-[760px] mx-auto w-full p-6 sm:p-8 pt-10 animate-in fade-in text-left font-sans">
             <SEO title={`${(slug || '').toUpperCase()} | Team Data`} canonicalPath={`/team/${slug}`} />
-            <Link to="/" className="inline-flex items-center gap-2 text-neutral-500 hover:text-white transition-all duration-300 ease-[0.16,1,0.3,1] active:scale-[0.98] mb-8 text-[10px] font-mono uppercase tracking-widest rounded-[4px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20 px-1 py-0.5 -ml-1">
-               <ArrowLeft className="h-4 w-4" strokeWidth={1.5} /> Dashboard
+            <Link to="/" className="inline-flex items-center gap-2 text-neutral-500 hover:text-white transition-all duration-300 active:scale-[0.98] mb-10 text-[10px] font-mono font-bold uppercase tracking-widest rounded-[8px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20 px-4 py-2 bg-[#0A0A0C] border border-white/[0.08] shadow-sm">
+               <ArrowLeft className="h-4 w-4" strokeWidth={1.5} /> Substrate Console
             </Link>
-            <h1 className="text-[28px] font-medium text-white/95 mb-8 capitalize tracking-tight">{slug?.replace(/-/g, ' ')}</h1>
-            <div className="bg-[#050505] border border-white/[0.04] p-10 rounded-[24px] text-neutral-500 text-center text-[10px] font-mono uppercase tracking-widest border-dashed select-none">Team context synchronization pending...</div>
+            <h1 className="text-[32px] font-medium text-white/95 mb-8 capitalize tracking-tight">{slug?.replace(/-/g, ' ')}</h1>
+            <div className="bg-[#050505] border border-white/[0.08] p-10 rounded-[16px] text-neutral-500 text-center text-[10px] font-mono uppercase tracking-widest border-dashed select-none font-bold">Team context synchronization pending...</div>
         </div>
     );
 }
 
 // ============================================================================
-// Main Application Wrapper
+// Live Terminal Routing Wrapper
+// ============================================================================
+function LiveTerminalRoute() {
+    const { gameId } = useParams<{ gameId: string }>();
+    const { user, token } = useAuthContext(); // Assuming a context for auth
+    return (
+        <main className="flex-1 w-full max-w-[1400px] mx-auto px-4 sm:px-6 pt-16 sm:pt-24 pb-10 flex flex-col animate-in fade-in duration-700 min-h-[100dvh]">
+            <div className="w-full mb-6 shrink-0">
+                <button 
+                    onClick={() => window.history.back()} // Go back to previous page
+                    className="inline-flex items-center gap-2 text-[10px] font-mono font-bold uppercase tracking-widest text-neutral-400 hover:text-white transition-all bg-[#050505] hover:bg-[#0A0A0C] px-5 py-2.5 rounded-[8px] border border-white/[0.06] outline-none shadow-sm focus-visible:ring-2 focus-visible:ring-white/20 active:scale-95"
+                >
+                    <ArrowLeft className="w-3.5 h-3.5" /> Return to Feed
+                </button>
+            </div>
+            
+            <div className="flex-1 w-full relative min-h-0">
+                <LiveQuantTerminal gameId={gameId || "mlb_sd_phi"} accessToken={token || undefined} />
+            </div>
+        </main>
+    );
+}
+
+// Dummy Auth Context for LiveTerminalRoute
+const AuthContext = React.createContext<any>(null);
+const useAuthContext = () => React.useContext(AuthContext);
+
+// ============================================================================
+// Main Application Wrapper 
 // ============================================================================
 export default function App() {
   const [user, setUser] = useState<any>(null);
   const [token, setToken] = useState<string | null>(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
+  
+  // Lifted Chat State (Prevents routing amnesia)
+  const [messages, setMessages] = useState<AuraChatMessage[]>([]);
 
   useEffect(() => {
-    const unsubscribe = initAuth(
-      (currentUser, currentToken) => {
-        setUser(currentUser);
-        setToken(currentToken);
-        setLoadingAuth(false);
-      },
-      () => {
-        setUser(null);
-        setToken(null);
-        setLoadingAuth(false);
-      }
-    );
+    const unsubscribe = initAuth((currentUser, currentToken) => {
+        setUser(currentUser); setToken(currentToken); setLoadingAuth(false);
+    }, () => {
+        setUser(null); setToken(null); setLoadingAuth(false);
+    });
     return () => unsubscribe();
   }, []);
 
-  const handleSignIn = async () => {
-    setLoadingAuth(true);
-    try {
-      const res = await googleSignIn();
-      if (res) {
-        setUser(res.user);
-        setToken(res.accessToken);
-      }
-    } catch (err) {
-      console.error("Sign in failed:", err);
-    } finally {
-      setLoadingAuth(false);
-    }
-  };
-
-  const handleSignOut = async () => {
-    setLoadingAuth(true);
-    try {
-      await logout();
-      setUser(null);
-      setToken(null);
-    } catch (err) {
-      console.error("Sign out failed:", err);
-    } finally {
-      setLoadingAuth(false);
-    }
-  };
+  const handleSignIn = async () => { setLoadingAuth(true); try { const res = await googleSignIn(); if (res) { setUser(res.user); setToken(res.accessToken); } } catch (err) { console.error("Sign in failed:", err); } finally { setLoadingAuth(false); } };
+  const handleSignOut = async () => { setLoadingAuth(true); try { await logout(); setUser(null); setToken(null); } catch (err) { console.error("Sign out failed:", err); } finally { setLoadingAuth(false); } };
 
   return (
     <BrowserRouter>
       <ScrollToTop />
-      <div className="min-h-screen bg-[#000000] text-neutral-200 flex flex-col font-sans selection:bg-white/20 selection:text-white">
+      <div className="min-h-screen bg-gradient-to-br from-neutral-950 to-black text-neutral-200 flex flex-col font-sans selection:bg-white/15 selection:text-white">
           <Navigation user={user} loadingAuth={loadingAuth} onSignIn={handleSignIn} onSignOut={handleSignOut} />
-          <Routes>
-              <Route path="/" element={<ChatInterface user={user} token={token} onSignIn={handleSignIn} loadingAuth={loadingAuth} />} />
-              <Route path="/story/:id" element={<CanonicalEntityPage />} />
-              <Route path="/team/:slug" element={<TeamCanonicalPage />} />
-              <Route path="/category/:category" element={<CategoryHubPage />} />
-          </Routes>
+          <AuthContext.Provider value={{ user, token }}>
+            <Routes>
+                <Route path="/" element={<ChatInterface user={user} token={token} onSignIn={handleSignIn} loadingAuth={loadingAuth} messages={messages} setMessages={setMessages} />} />
+                <Route path="/story/:id" element={<CanonicalEntityPage />} />
+                <Route path="/team/:slug" element={<TeamCanonicalPage />} />
+                <Route path="/category/:category" element={<CategoryHubPage />} />
+                <Route path="/live/:gameId" element={<LiveTerminalRoute token={token} />} />
+            </Routes>
+          </AuthContext.Provider>
       </div>
     </BrowserRouter>
   );

@@ -93,14 +93,14 @@ export async function runKalshiIngestion(db: any) {
         console.log(`${LOG_PREFIX} Fetching real-time market liquidity from Kalshi...`);
         
         // Timeout & Error handling for external fetch to prevent memory leaks
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10000);
+        const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Fetch timed out')), 10000)
+        );
 
-        // Target high limit to capture broad weekend slates
-        const res = await fetch('https://api.elections.kalshi.com/trade-api/v2/markets?limit=500', {
-            signal: controller.signal
-        });
-        clearTimeout(timeoutId);
+        // Target high limit to capture broad weekend slates and exclude combo/MVE contracts
+        const fetchPromise = fetch('https://api.elections.kalshi.com/trade-api/v2/markets?limit=500&mve_filter=exclude');
+
+        const res = await Promise.race([fetchPromise, timeoutPromise]) as Response;
         
         if (!res.ok) {
             throw new Error(`Kalshi API responded with status: ${res.status}`);
@@ -142,6 +142,11 @@ export async function runKalshiIngestion(db: any) {
             let matchedSide = null;
 
             for (const market of markets) {
+                // Skip Multivariate Event (MVE) combo contracts or parlay legs
+                if (market.market_mve_id || market.mve_ticker || (market.title && (market.title.toLowerCase().includes('[leg') || market.title.includes(',')))) {
+                    continue;
+                }
+
                 // Ignore illiquid markets where asking price is 0 (Prevents NaN logic errors)
                 if (market.yes_ask_dollars <= 0 && market.no_ask_dollars <= 0) continue;
 
