@@ -28,7 +28,7 @@ import { WorkspaceAgent } from './src/server/agents/workspace/workspace-agent';
 import { DeepResearchAgent } from './src/server/agents/research/deep-research-agent';
 import { GeneralAgent } from './src/server/agents/general/general-agent';
 import { CodingAgent } from './src/server/agents/coding-agent';
-import { LiveInGameAgent } from './src/server/agents/live-in-game-agent';
+import { LiveInGameAgent } from './src/server/agents/sports/live-in-game-agent';
 import { YouTubeAgent } from './src/server/agents/media/youtube-agent';
 import { PortfolioSharpAgent } from './src/server/agents/portfolio-sharp-agent';
 import { LineShopperAgent } from './src/server/agents/line-shopper-agent';

@@ -1,12 +1,25 @@
 import { AuraAgent, RouteContext, AgentResponse } from './types';
+import { SportsAgent } from './sports/sports-agent';
+import { DeepResearchAgent } from './research/deep-research-agent';
+import { WorkspaceAgent } from './workspace/workspace-agent';
+import { MarketsAgent } from './markets/markets-agent';
+import { LiveInGameAgent } from './sports/live-in-game-agent';
 
 export class RegistryRouter {
   private agents: Map<string, AuraAgent> = new Map();
   private defaultAgentId: string = 'general-agent';
 
-  constructor(agents: AuraAgent[], defaultAgentId?: string) {
-    for (const agent of agents) {
-      this.agents.set(agent.id, agent);
+  constructor(customAgents?: AuraAgent[], defaultAgentId?: string) {
+    if (customAgents) {
+      for (const agent of customAgents) {
+        this.agents.set(agent.id, agent);
+      }
+    } else {
+      this.agents.set('sports-agent', new SportsAgent());
+      this.agents.set('deep-research-agent', new DeepResearchAgent());
+      this.agents.set('workspace-agent', new WorkspaceAgent());
+      this.agents.set('markets-agent', new MarketsAgent());
+      this.agents.set('live-in-game-agent', new LiveInGameAgent());
     }
     if (defaultAgentId) {
       this.defaultAgentId = defaultAgentId;

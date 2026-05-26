@@ -18,7 +18,7 @@ export interface RouteContext {
 
 export interface AgentResponse {
   success: boolean;
-  output: any;
+  output?: any;
   handoffTo?: string;
   /**
    * Structured payload passed to the recipient agent during a handoff.
